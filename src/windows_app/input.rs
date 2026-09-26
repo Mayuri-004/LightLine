@@ -1,5 +1,5 @@
 use super::git::GitHit;
-use super::terminal::{TERMINAL_HEADER, TerminalHeaderHit};
+use super::terminal::{TERMINAL_HEADER, TerminalHeaderHit, TerminalProfileMenuHit};
 use super::*;
 
 fn is_editor_ctrl_key(key: u32, shift: bool) -> bool {
@@ -33,6 +33,13 @@ impl App {
         self.clear_hover(hwnd);
         let ctrl = unsafe { GetKeyState(VK_CONTROL as i32) } < 0;
         let shift = unsafe { GetKeyState(VK_SHIFT as i32) } < 0;
+        if self.terminal_profile_menu_open && key == VK_ESCAPE as u32 && !ctrl && !shift {
+            self.terminal_profile_menu_open = false;
+            self.terminal_profile_defaults_open = false;
+            self.terminal_profile_availability.clear();
+            unsafe { InvalidateRect(hwnd, null(), 0) };
+            return true;
+        }
         if self.terminal_focus
             && !self.quick_open
             && !self.search_input
@@ -1205,6 +1212,40 @@ impl App {
         unsafe {
             GetClientRect(hwnd, &mut rect);
         }
+        if self.terminal_profile_menu_open {
+            let left = self.editor_left();
+            let top = self.terminal_top(hwnd);
+            let bottom = rect.bottom - self.scale(STATUS);
+            match self.terminal_profile_menu_hit(left, rect.right, top, bottom, x, y) {
+                TerminalProfileMenuHit::Shell(shell) => {
+                    if self.terminal_profile_shell_available(shell) {
+                        self.terminal_profile_menu_open = false;
+                        self.terminal_profile_availability.clear();
+                        if self.terminal_profile_defaults_open {
+                            self.terminal_profile_defaults_open = false;
+                            self.set_default_terminal_profile(hwnd, shell);
+                        } else {
+                            self.new_terminal_with_shell(hwnd, shell, false);
+                        }
+                    }
+                }
+                TerminalProfileMenuHit::Settings => {
+                    self.terminal_profile_defaults_open = true;
+                    unsafe { InvalidateRect(hwnd, null(), 0) };
+                }
+                TerminalProfileMenuHit::Back => {
+                    self.terminal_profile_defaults_open = false;
+                    unsafe { InvalidateRect(hwnd, null(), 0) };
+                }
+                TerminalProfileMenuHit::None => {
+                    self.terminal_profile_menu_open = false;
+                    self.terminal_profile_defaults_open = false;
+                    self.terminal_profile_availability.clear();
+                    unsafe { InvalidateRect(hwnd, null(), 0) };
+                }
+            }
+            return;
+        }
         if self.quick_open {
             let width = self.scale(560).min(rect.right - self.scale(30));
             let left = (rect.right - width) / 2;
@@ -1682,7 +1723,7 @@ impl App {
                     }
                     TerminalHeaderHit::TerminalTab(index) => self.select_terminal(hwnd, index),
                     TerminalHeaderHit::New => self.new_terminal(hwnd, false),
-                    TerminalHeaderHit::ShellPicker => self.show_shell_picker_menu(hwnd, x, y),
+                    TerminalHeaderHit::ShellPicker => self.toggle_terminal_profile_menu(hwnd),
                     TerminalHeaderHit::Kill => self.close_active_terminal(hwnd),
                     TerminalHeaderHit::Body => {
                         self.focus_terminal(hwnd);
@@ -1830,7 +1871,7 @@ impl App {
             if x >= left && x < right && y >= top && y < top + self.scale(TERMINAL_HEADER) {
                 let hit = self.terminal_header_hit(left, right, top, x, y);
                 if matches!(hit, TerminalHeaderHit::New | TerminalHeaderHit::ShellPicker) {
-                    self.show_shell_picker_menu(hwnd, x, y);
+                    self.toggle_terminal_profile_menu(hwnd);
                     return;
                 }
             }

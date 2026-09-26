@@ -118,6 +118,18 @@ impl App {
 
         let shell_open = self.terminal_tab == TerminalTab::Terminal
             && self.terminal_active < self.terminals.len();
+        self.panel_card(
+            hdc,
+            RECT {
+                left: layout.plus.left,
+                top: top + self.scale(5),
+                right: layout.chevron.right,
+                bottom: header_bottom - self.scale(5),
+            },
+            self.scale(4),
+            self.theme.card_edge,
+            rgb(15, 28, 49),
+        );
         Self::label(
             hdc,
             "+",
@@ -193,6 +205,9 @@ impl App {
             layout.hide,
         );
         let Some(snapshot) = active_snapshot else {
+            if self.terminal_profile_menu_open {
+                self.paint_terminal_profile_menu(hdc, left, right, top, bottom);
+            }
             return;
         };
         let cell_width = self.cell_width.max(1);
@@ -290,6 +305,245 @@ impl App {
         }
         unsafe {
             SelectObject(hdc, old_font);
+        }
+        if self.terminal_profile_menu_open {
+            self.paint_terminal_profile_menu(hdc, left, right, top, bottom);
+        }
+    }
+
+    fn paint_terminal_profile_menu(&self, hdc: HDC, left: i32, right: i32, top: i32, bottom: i32) {
+        let s = |v: i32| self.scale(v);
+        let layout = self.terminal_profile_menu_layout(left, right, top, bottom);
+        let menu = layout.rect;
+        Self::rounded_fill(
+            hdc,
+            RECT {
+                left: menu.left + s(4),
+                top: menu.top + s(5),
+                right: menu.right + s(4),
+                bottom: menu.bottom + s(5),
+            },
+            s(7),
+            rgb(4, 9, 18),
+        );
+        self.panel_card(hdc, menu, s(7), rgb(47, 73, 112), rgb(13, 25, 45));
+        let title = if self.terminal_profile_defaults_open {
+            "SELECT DEFAULT PROFILE"
+        } else {
+            "NEW TERMINAL"
+        };
+        Self::label(
+            hdc,
+            title,
+            menu.left + s(12),
+            menu.top + s(3),
+            rgb(129, 154, 194),
+            menu,
+        );
+
+        let default_shell = self.settings.default_terminal_profile;
+        for (shell, row) in &layout.shell_rows {
+            let available = self.terminal_profile_shell_available(*shell);
+            let is_default = *shell == default_shell;
+            if is_default {
+                Self::rounded_fill(hdc, *row, s(4), rgb(24, 53, 94));
+                Self::fill(
+                    hdc,
+                    RECT {
+                        left: row.left,
+                        top: row.top + s(2),
+                        right: row.left + s(3),
+                        bottom: row.bottom - s(2),
+                    },
+                    rgb(40, 205, 225),
+                );
+            }
+            let icon = RECT {
+                left: row.left + s(9),
+                top: row.top + s(3),
+                right: row.left + s(29),
+                bottom: row.bottom - s(3),
+            };
+            let text_color = if available {
+                rgb(226, 235, 249)
+            } else {
+                rgb(91, 107, 132)
+            };
+            self.paint_terminal_profile_shell_icon(hdc, *shell, icon, available);
+            Self::label(
+                hdc,
+                shell.name(),
+                row.left + s(38),
+                row.top + s(3),
+                text_color,
+                *row,
+            );
+            if !available {
+                let label = "Not installed";
+                let width = self.text_width(hdc, label);
+                Self::label(
+                    hdc,
+                    label,
+                    row.right - width - s(10),
+                    row.top + s(3),
+                    rgb(91, 107, 132),
+                    *row,
+                );
+            } else if is_default {
+                let badge = RECT {
+                    left: row.right - s(88),
+                    top: row.top + s(2),
+                    right: row.right - s(9),
+                    bottom: row.bottom - s(2),
+                };
+                self.panel_card(hdc, badge, s(9), rgb(105, 91, 172), rgb(42, 40, 78));
+                unsafe {
+                    let pen = CreatePen(PS_SOLID, s(2).max(1), rgb(142, 232, 221));
+                    let old_pen = SelectObject(hdc, pen);
+                    MoveToEx(hdc, badge.left + s(8), row.top + s(12), null_mut());
+                    LineTo(hdc, badge.left + s(11), row.top + s(15));
+                    LineTo(hdc, badge.left + s(16), row.top + s(8));
+                    SelectObject(hdc, old_pen);
+                    DeleteObject(pen);
+                }
+                Self::label(
+                    hdc,
+                    "Default",
+                    badge.left + s(22),
+                    row.top + s(3),
+                    rgb(221, 216, 249),
+                    badge,
+                );
+            }
+        }
+
+        let after_shells = layout
+            .shell_rows
+            .last()
+            .map(|(_, row)| row.bottom)
+            .unwrap_or(menu.top + s(24));
+        Self::fill(
+            hdc,
+            RECT {
+                left: menu.left + s(10),
+                top: after_shells + s(1),
+                right: menu.right - s(10),
+                bottom: after_shells + s(2),
+            },
+            rgb(40, 57, 84),
+        );
+        if let Some(settings) = layout.settings {
+            Self::rounded_fill(hdc, settings, s(4), rgb(17, 34, 59));
+            Self::label(
+                hdc,
+                "\u{2699}",
+                settings.left + s(8),
+                settings.top + s(3),
+                rgb(205, 220, 242),
+                settings,
+            );
+            Self::label(
+                hdc,
+                "Select Default Profile",
+                settings.left + s(38),
+                settings.top + s(4),
+                rgb(226, 235, 249),
+                settings,
+            );
+            Self::label(
+                hdc,
+                "\u{203a}",
+                settings.right - s(16),
+                settings.top + s(3),
+                rgb(158, 179, 213),
+                settings,
+            );
+        } else {
+            Self::rounded_fill(hdc, layout.footer, s(4), rgb(17, 34, 59));
+            Self::label(
+                hdc,
+                "\u{2039}",
+                layout.footer.left + s(8),
+                layout.footer.top + s(3),
+                rgb(158, 179, 213),
+                layout.footer,
+            );
+            Self::label(
+                hdc,
+                "Back",
+                layout.footer.left + s(28),
+                layout.footer.top + s(4),
+                rgb(205, 220, 242),
+                layout.footer,
+            );
+        }
+    }
+
+    fn paint_terminal_profile_shell_icon(
+        &self,
+        hdc: HDC,
+        shell: ShellKind,
+        icon: RECT,
+        available: bool,
+    ) {
+        let s = |v: i32| self.scale(v);
+        let muted = rgb(75, 91, 116);
+        if shell == ShellKind::GitBash {
+            self.rail_icon(
+                hdc,
+                2,
+                icon.left + s(2),
+                icon.top + s(1),
+                if available { rgb(244, 91, 57) } else { muted },
+            );
+            return;
+        }
+
+        let (border, background, glyph) = match shell {
+            ShellKind::PowerShell if available => {
+                (rgb(70, 161, 232), rgb(27, 103, 175), rgb(247, 251, 255))
+            }
+            ShellKind::CommandPrompt if available => {
+                (rgb(116, 137, 168), rgb(15, 23, 36), rgb(230, 237, 247))
+            }
+            ShellKind::Wsl if available => (rgb(77, 184, 137), rgb(15, 52, 44), rgb(193, 242, 216)),
+            _ => (rgb(65, 79, 101), rgb(18, 27, 41), muted),
+        };
+        self.panel_card(hdc, icon, s(3), border, background);
+
+        unsafe {
+            let pen = CreatePen(PS_SOLID, s(2).max(1), glyph);
+            let old_pen = SelectObject(hdc, pen);
+            let left = icon.left;
+            let top = icon.top;
+            match shell {
+                ShellKind::PowerShell => {
+                    MoveToEx(hdc, left + s(5), top + s(5), null_mut());
+                    LineTo(hdc, left + s(9), top + s(9));
+                    LineTo(hdc, left + s(5), top + s(13));
+                    MoveToEx(hdc, left + s(10), top + s(13), null_mut());
+                    LineTo(hdc, left + s(15), top + s(13));
+                }
+                ShellKind::CommandPrompt => {
+                    MoveToEx(hdc, left + s(4), top + s(6), null_mut());
+                    LineTo(hdc, left + s(8), top + s(9));
+                    LineTo(hdc, left + s(4), top + s(12));
+                    MoveToEx(hdc, left + s(10), top + s(12), null_mut());
+                    LineTo(hdc, left + s(15), top + s(12));
+                }
+                ShellKind::Wsl => {
+                    MoveToEx(hdc, left + s(4), top + s(5), null_mut());
+                    LineTo(hdc, left + s(8), top + s(9));
+                    LineTo(hdc, left + s(4), top + s(13));
+                    MoveToEx(hdc, left + s(10), top + s(13), null_mut());
+                    LineTo(hdc, left + s(15), top + s(13));
+                    MoveToEx(hdc, left + s(4), top + s(3), null_mut());
+                    LineTo(hdc, left + s(15), top + s(3));
+                }
+                ShellKind::GitBash => {}
+            }
+            SelectObject(hdc, old_pen);
+            DeleteObject(pen);
         }
     }
 }

@@ -196,6 +196,20 @@ pub(super) struct TerminalHeaderLayout {
     pub(super) hide: RECT,
 }
 
+pub(super) struct TerminalProfileMenuLayout {
+    pub(super) rect: RECT,
+    pub(super) shell_rows: Vec<(ShellKind, RECT)>,
+    pub(super) settings: Option<RECT>,
+    pub(super) footer: RECT,
+}
+
+pub(super) enum TerminalProfileMenuHit {
+    Shell(ShellKind),
+    Settings,
+    Back,
+    None,
+}
+
 impl App {
     // Output holds run/build results (cargo test, Run Python) in a dedicated
     // ManagedRun session on the shared `terminal` service; the interactive
@@ -399,6 +413,9 @@ impl App {
     pub(super) fn hide_terminal(&mut self, hwnd: HWND) {
         self.terminal_visible = false;
         self.terminal_focus = false;
+        self.terminal_profile_menu_open = false;
+        self.terminal_profile_defaults_open = false;
+        self.terminal_profile_availability.clear();
         self.keep_cursor_visible(hwnd);
         unsafe { InvalidateRect(hwnd, null(), 0) };
     }
@@ -645,6 +662,126 @@ impl App {
         TerminalHeaderHit::Body
     }
 
+    pub(super) fn terminal_profile_menu_layout(
+        &self,
+        left: i32,
+        right: i32,
+        top: i32,
+        bottom: i32,
+    ) -> TerminalProfileMenuLayout {
+        let s = |v: i32| self.scale(v);
+        let header = self.terminal_header_layout(left, right, top);
+        let width = s(252);
+        let menu_left = header
+            .chevron
+            .left
+            .min(right - width - s(8))
+            .max(left + s(8));
+        let title_height = s(22);
+        let row_height = s(25);
+        let action_height = s(27);
+        let menu_height = title_height + row_height * 4 + s(5) + action_height + s(4);
+        let desired_top = header.header_bottom + s(3);
+        let menu_top = desired_top.min(bottom - menu_height - s(3)).max(s(4));
+        let shell_top = menu_top + title_height;
+        let shell_rows = ShellKind::all()
+            .iter()
+            .enumerate()
+            .map(|(index, shell)| {
+                (
+                    *shell,
+                    RECT {
+                        left: menu_left + s(4),
+                        top: shell_top + index as i32 * row_height,
+                        right: menu_left + width - s(4),
+                        bottom: shell_top + (index as i32 + 1) * row_height,
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+        let after_shells = shell_top + row_height * 4;
+        let action = RECT {
+            left: menu_left + s(4),
+            top: after_shells + s(4),
+            right: menu_left + width - s(4),
+            bottom: after_shells + s(4) + action_height,
+        };
+        if self.terminal_profile_defaults_open {
+            TerminalProfileMenuLayout {
+                rect: RECT {
+                    left: menu_left,
+                    top: menu_top,
+                    right: menu_left + width,
+                    bottom: menu_top + menu_height,
+                },
+                shell_rows,
+                settings: None,
+                footer: action,
+            }
+        } else {
+            TerminalProfileMenuLayout {
+                rect: RECT {
+                    left: menu_left,
+                    top: menu_top,
+                    right: menu_left + width,
+                    bottom: menu_top + menu_height,
+                },
+                shell_rows,
+                settings: Some(action),
+                footer: RECT::default(),
+            }
+        }
+    }
+
+    pub(super) fn terminal_profile_menu_hit(
+        &self,
+        left: i32,
+        right: i32,
+        top: i32,
+        bottom: i32,
+        x: i32,
+        y: i32,
+    ) -> TerminalProfileMenuHit {
+        let layout = self.terminal_profile_menu_layout(left, right, top, bottom);
+        let inside =
+            |rect: &RECT| x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom;
+        for (shell, rect) in &layout.shell_rows {
+            if inside(rect) {
+                return TerminalProfileMenuHit::Shell(*shell);
+            }
+        }
+        if let Some(settings) = &layout.settings
+            && inside(settings)
+        {
+            return TerminalProfileMenuHit::Settings;
+        }
+        if self.terminal_profile_defaults_open && inside(&layout.footer) {
+            return TerminalProfileMenuHit::Back;
+        }
+        TerminalProfileMenuHit::None
+    }
+
+    pub(super) fn toggle_terminal_profile_menu(&mut self, hwnd: HWND) {
+        self.terminal_profile_menu_open = !self.terminal_profile_menu_open;
+        self.terminal_profile_defaults_open = false;
+        if self.terminal_profile_menu_open {
+            self.terminal_profile_availability = ShellKind::all()
+                .iter()
+                .map(|shell| (*shell, shell.is_available()))
+                .collect();
+        } else {
+            self.terminal_profile_availability.clear();
+        }
+        unsafe { InvalidateRect(hwnd, null(), 0) };
+    }
+
+    pub(super) fn terminal_profile_shell_available(&self, shell: ShellKind) -> bool {
+        self.terminal_profile_availability
+            .iter()
+            .find_map(|(candidate, available)| (*candidate == shell).then_some(*available))
+            .unwrap_or(false)
+    }
+
     pub(super) fn set_default_terminal_profile(&mut self, hwnd: HWND, shell: ShellKind) {
         self.settings.default_terminal_profile = shell;
         if let Err(e) = self.settings.save() {
@@ -655,6 +792,7 @@ impl App {
         unsafe { InvalidateRect(hwnd, null(), 0) };
     }
 
+    #[allow(dead_code)]
     pub(super) fn show_shell_picker_menu(&mut self, hwnd: HWND, x: i32, y: i32) {
         use windows_sys::Win32::Graphics::Gdi::ClientToScreen;
         use windows_sys::Win32::UI::WindowsAndMessaging::{
