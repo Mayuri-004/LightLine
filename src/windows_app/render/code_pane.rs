@@ -12,6 +12,33 @@ fn blend(base: u32, over: u32, amount: f32) -> u32 {
 }
 
 impl App {
+    // What a pane shows when no file is open: how to open one, in place of
+    // the stand-in document's empty line 1.
+    fn paint_empty_pane(&self, hdc: HDC, bounds: RECT) {
+        let lines = [
+            ("No file is open", self.brand_font, self.theme.text),
+            (
+                "Choose one in the Explorer, or press Ctrl+P to find a file",
+                self.ui_font,
+                self.theme.muted,
+            ),
+            ("Ctrl+N starts a new file", self.ui_font, self.theme.muted),
+        ];
+        let row = self.scale(28);
+        let top =
+            bounds.top + ((bounds.bottom - bounds.top) - row * lines.len() as i32).max(0) * 2 / 5;
+        unsafe {
+            let saved = SaveDC(hdc);
+            for (index, (text, font, color)) in lines.into_iter().enumerate() {
+                SelectObject(hdc, font);
+                let width = self.text_width(hdc, text);
+                let x = (bounds.left + (bounds.right - bounds.left - width) / 2).max(bounds.left);
+                Self::label(hdc, text, x, top + row * index as i32, color, bounds);
+            }
+            RestoreDC(hdc, saved);
+        }
+    }
+
     pub(in crate::windows_app) fn paint_code_pane(
         &self,
         hdc: HDC,
@@ -28,6 +55,18 @@ impl App {
             self.paint_image_pane(
                 hdc,
                 image,
+                RECT {
+                    left,
+                    top: self.editor_top(),
+                    right,
+                    bottom,
+                },
+            );
+            return;
+        }
+        if self.tabs[self.tab_for_pane(pane)].is_placeholder() {
+            self.paint_empty_pane(
+                hdc,
                 RECT {
                     left,
                     top: self.editor_top(),

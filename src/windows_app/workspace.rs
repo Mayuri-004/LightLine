@@ -201,7 +201,7 @@ impl App {
         self.hover_target = None;
         self.hover_card = None;
         self.tabs.clear();
-        self.tabs.push(Tab::new(Document::new()));
+        self.tabs.push(Tab::placeholder());
         self.pane_tabs = [0, 0];
         self.active = 0;
         self.welcome = true;

@@ -233,6 +233,10 @@ pub(super) struct Tab {
     // `document` holds the generated dump text as its only "content", which
     // must never be written back over the real file.
     pub(super) binary_preview: bool,
+    // True for the empty document LightLine keeps open when no file is (the
+    // editor always needs one tab). It gets no tab or breadcrumb, and the
+    // pane shows how to open a file instead; Ctrl+N makes it a real file.
+    pub(super) placeholder: bool,
 }
 
 #[derive(Clone)]
@@ -301,7 +305,21 @@ impl Tab {
             lsp_language: None,
             image: None,
             binary_preview: false,
+            placeholder: false,
         }
+    }
+
+    // The empty stand-in document shown as "no file open" (see `placeholder`).
+    pub(super) fn placeholder() -> Self {
+        let mut tab = Self::new(Document::new());
+        tab.placeholder = true;
+        tab
+    }
+
+    // Still the untouched stand-in: nothing typed (edits to it are refused)
+    // and never saved to a path.
+    pub(super) fn is_placeholder(&self) -> bool {
+        self.placeholder && self.document.path.is_none() && !self.document.is_dirty()
     }
 
     fn new_image(path: PathBuf, image: image_view::ImageAsset) -> Self {
@@ -331,6 +349,7 @@ impl Tab {
             lsp_language: None,
             image: None,
             binary_preview: true,
+            placeholder: false,
         }
     }
 
@@ -874,7 +893,7 @@ impl App {
         let settings = lightline::settings::Settings::load();
         let theme = Theme::default_dark().with_overrides(&settings.colors);
         Self {
-            tabs: vec![Tab::new(Document::new())],
+            tabs: vec![Tab::placeholder()],
             active: 0,
             pane_tabs: [0, 0],
             focused_pane: 0,
@@ -1559,7 +1578,11 @@ impl App {
         self.terminal_focus = false;
         self.review_file = None;
         self.side_view = SideView::Files;
-        if !from_welcome
+        if self.tab().is_placeholder() {
+            // The hidden stand-in becomes the new file rather than staying
+            // open, invisible, beside it.
+            self.tab_mut().placeholder = false;
+        } else if !from_welcome
             || self.doc().path.is_some()
             || self.doc().is_dirty()
             || !self.doc().line(0).is_empty()
@@ -1695,7 +1718,7 @@ impl App {
             if self.workspace_root.is_none() {
                 self.welcome = true;
             }
-            self.tabs.push(Tab::new(Document::new()));
+            self.tabs.push(Tab::placeholder());
             self.pane_tabs = [0, 0];
         } else {
             for tab in &mut self.pane_tabs {
@@ -1926,7 +1949,7 @@ impl App {
     }
 
     pub(super) fn update_title(&self, hwnd: HWND) {
-        if self.welcome {
+        if self.welcome || self.tab().is_placeholder() {
             unsafe { SetWindowTextW(hwnd, wide("LightLine").as_ptr()) };
             return;
         }
@@ -1990,7 +2013,7 @@ impl App {
         // holds a placeholder document that must never be written to disk as if
         // it were real content, so refuse to touch it here rather than trusting
         // every caller to check first.
-        if self.tab().read_only() {
+        if self.tab().read_only() || self.tab().is_placeholder() {
             return;
         }
         let lines_before = self.doc().line_count();
@@ -2447,6 +2470,10 @@ impl App {
     }
 
     pub(super) fn save(&mut self, hwnd: HWND, save_as: bool) -> bool {
+        // No file is open; Ctrl+S has nothing to write.
+        if self.tab().is_placeholder() {
+            return false;
+        }
         if self.tab().image.is_some() {
             self.status = "This is an image preview; there is nothing to save".into();
             return false;
@@ -2651,6 +2678,17 @@ mod split_tests {
         assert_eq!(tab_index_after_close(2, 1, 2), 1);
         assert_eq!(tab_index_after_close(1, 1, 2), 1);
         assert_eq!(tab_index_after_close(0, 0, 0), 0);
+    }
+
+    #[test]
+    fn only_the_untouched_stand_in_tab_counts_as_the_placeholder() {
+        assert!(Tab::placeholder().is_placeholder());
+        // A new file the user asked for is a real document with a tab.
+        assert!(!Tab::new(Document::new()).is_placeholder());
+        // Once it has a path it is a real file, whatever the flag says.
+        let mut saved = Tab::placeholder();
+        saved.document.path = Some(PathBuf::from("notes.txt"));
+        assert!(!saved.is_placeholder());
     }
 
     #[test]

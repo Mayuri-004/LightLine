@@ -79,6 +79,9 @@ impl App {
         x: i32,
         y: i32,
     ) {
+        if self.tab().is_placeholder() {
+            return;
+        }
         let editor_bottom = (rect.bottom - self.scale(STATUS)).max(0);
         let language_rect = unsafe {
             let hdc = GetDC(hwnd);
@@ -382,6 +385,10 @@ impl App {
                 // actually drawn there.
                 let (split_rect, more_rect) = self.pane_actions(right);
                 let tab_index = self.tab_for_pane(pane);
+                // No file is open: no "Editor > Untitled" path, no controls.
+                if self.tabs[tab_index].is_placeholder() {
+                    continue;
+                }
                 let path_part = self.tabs[tab_index]
                     .document
                     .path
@@ -442,6 +449,9 @@ impl App {
                 let index = self.tab_first + slot;
                 if index >= self.tabs.len() {
                     break;
+                }
+                if self.tabs[index].is_placeholder() {
+                    continue;
                 }
                 let left = editor_left + slot as i32 * tab_width;
                 if left >= editor_card.right {
@@ -1161,31 +1171,43 @@ impl App {
             // name is a real clickable control (see status_language_control),
             // so it's drawn in the accent color used for other clickable
             // labels instead of blending into the plain muted text.
-            let (mid_x, clip_right, prefix, language_rect) =
-                self.status_language_control(hdc, rect, editor_bottom, left_info_right, ready_x);
-            let label_clip = RECT {
-                left: mid_x,
-                top: editor_bottom,
-                right: clip_right,
-                bottom: rect.bottom,
+            // With no file open there is no document to describe, so the
+            // status message may use the space up to the Ready indicator.
+            let mid_x = if self.tab().is_placeholder() {
+                ready_x
+            } else {
+                let (mid_x, clip_right, prefix, language_rect) = self.status_language_control(
+                    hdc,
+                    rect,
+                    editor_bottom,
+                    left_info_right,
+                    ready_x,
+                );
+                let label_clip = RECT {
+                    left: mid_x,
+                    top: editor_bottom,
+                    right: clip_right,
+                    bottom: rect.bottom,
+                };
+                Self::label(
+                    hdc,
+                    &prefix,
+                    mid_x,
+                    editor_bottom + self.scale(5),
+                    self.theme.muted,
+                    label_clip,
+                );
+                let language = language_label(self.doc().path.as_deref());
+                Self::label(
+                    hdc,
+                    &language,
+                    language_rect.left,
+                    editor_bottom + self.scale(5),
+                    rgb(80, 160, 220),
+                    label_clip,
+                );
+                mid_x
             };
-            Self::label(
-                hdc,
-                &prefix,
-                mid_x,
-                editor_bottom + self.scale(5),
-                self.theme.muted,
-                label_clip,
-            );
-            let language = language_label(self.doc().path.as_deref());
-            Self::label(
-                hdc,
-                &language,
-                language_rect.left,
-                editor_bottom + self.scale(5),
-                rgb(80, 160, 220),
-                label_clip,
-            );
             // What the last action reported ("Formatted with ...", "WSL is not
             // available ..."), shown for a few seconds in the free space
             // between the problem counts and the cursor info.

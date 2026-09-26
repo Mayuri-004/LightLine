@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Changed
 - **No Terminal at Startup**: LightLine no longer starts a PowerShell session on every launch. Startup is faster, the Welcome screen shows again, and the editor keeps keyboard focus. `` Ctrl+` `` starts the first terminal when you need it.
+- **No Stray "Untitled" Tab**: Opening a folder (or closing the last file) no longer shows an empty "Untitled" tab. The editor says no file is open and how to open one; `Ctrl+N` still creates a real Untitled file.
 
 #### Fixed
 - **Replace All No Longer Hangs**: Replacing text with something that contains it (e.g. `foo` → `self.foo`) looped forever. Replace All now finds every match first and applies them as a single edit, which is also a single undo step.

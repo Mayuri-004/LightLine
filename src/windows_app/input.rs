@@ -1712,6 +1712,9 @@ impl App {
         if y >= self.tab_strip_bottom() && y < self.editor_top() {
             for pane in 0..if self.split_visible { 2 } else { 1 } {
                 let (split, _) = self.pane_actions(self.pane_right(hwnd, pane));
+                if self.tabs[self.tab_for_pane(pane)].is_placeholder() {
+                    continue;
+                }
                 if x >= split.left && x < split.right {
                     self.focus_pane(hwnd, pane);
                     self.toggle_split(hwnd);
@@ -1745,7 +1748,7 @@ impl App {
             }
             let slot = ((x - editor_left).max(0) / self.scale(TAB_WIDTH).max(1)) as usize;
             let index = self.tab_first + slot;
-            if index < self.tabs.len() {
+            if index < self.tabs.len() && !self.tabs[index].is_placeholder() {
                 if (x - editor_left) % self.scale(TAB_WIDTH) >= self.scale(TAB_WIDTH - 30) {
                     self.close_tab(hwnd, index);
                 } else {
@@ -1766,6 +1769,9 @@ impl App {
             self.focus_pane(hwnd, pane);
         }
         let pane = self.focused_pane;
+        if self.tabs[self.tab_for_pane(pane)].is_placeholder() {
+            return;
+        }
         let pane_left = self.pane_left(hwnd, pane);
         if x < pane_left + self.scale(GUTTER) {
             if x < pane_left + self.scale(24) {
