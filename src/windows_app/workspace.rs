@@ -5,11 +5,17 @@ impl App {
         if self.directory_cache.contains_key(path) {
             return;
         }
+        // Watched before it is read, so a file created in between still
+        // shows up on the watcher's next pass instead of being missed.
+        if let Some(watcher) = &self.watcher {
+            watcher.watch_directory(path.to_path_buf());
+        }
+        // Every entry: taking the first N in read_dir order (before sorting)
+        // used to show an arbitrary subset of a large folder.
         let mut entries: Vec<ExplorerEntry> = std::fs::read_dir(path)
             .into_iter()
             .flatten()
             .filter_map(Result::ok)
-            .take(400)
             .filter_map(|entry| {
                 if entry.file_name().to_str() == Some(".git") {
                     return None;
@@ -21,24 +27,18 @@ impl App {
                 })
             })
             .collect();
-        entries.sort_by(|a, b| {
-            let rank = |entry: &ExplorerEntry| {
-                if entry.is_dir { 0 } else { 1 }
-            };
-            rank(a).cmp(&rank(b)).then_with(|| {
-                a.path
+        // Folders first, then case-insensitive by name; the key is computed
+        // once per entry rather than twice per comparison.
+        entries.sort_by_cached_key(|entry| {
+            (
+                !entry.is_dir,
+                entry
+                    .path
                     .file_name()
                     .unwrap_or_default()
                     .to_string_lossy()
-                    .to_lowercase()
-                    .cmp(
-                        &b.path
-                            .file_name()
-                            .unwrap_or_default()
-                            .to_string_lossy()
-                            .to_lowercase(),
-                    )
-            })
+                    .to_lowercase(),
+            )
         });
         self.directory_cache.insert(path.to_path_buf(), entries);
     }
@@ -86,8 +86,10 @@ impl App {
             return;
         }
         self.workspace_root = Some(root.clone());
+        // The previous workspace's folders stop being watched; load_directory
+        // below starts watching the new root and each folder as it is shown.
         if let Some(watcher) = &self.watcher {
-            watcher.watch_directory(root.clone());
+            watcher.unwatch_directories();
         }
         self.workspace_branch = Self::head_branch(&root);
         self.directory_cache.clear();
@@ -166,6 +168,9 @@ impl App {
         }
         self.workspace_root = None;
         self.workspace_branch = None;
+        if let Some(watcher) = &self.watcher {
+            watcher.unwatch_directories();
+        }
         self.directory_cache.clear();
         self.expanded_dirs.clear();
         self.explorer_first_row = 0;
@@ -414,7 +419,7 @@ impl App {
             return;
         };
         let mut dir = root;
-        for part in relative.components().take(8) {
+        for part in relative.components() {
             dir.push(part);
             self.expanded_dirs.insert(dir.clone());
             self.load_directory(&dir);
@@ -442,7 +447,10 @@ impl App {
         self.refresh(hwnd);
     }
 
-    pub(super) fn explorer_rows(&self) -> Vec<ExplorerRow> {
+    // Every row of the expanded tree. There is deliberately no row or depth
+    // cap: rows past a cap were silently unreachable. Painting only draws the
+    // rows that fit on screen, starting at explorer_first_row.
+    pub(super) fn explorer_rows(&self) -> Vec<ExplorerRow<'_>> {
         let mut rows = Vec::new();
         if let Some(root) = &self.workspace_root
             && self.expanded_dirs.contains(root)
@@ -452,23 +460,17 @@ impl App {
         rows
     }
 
-    pub(super) fn append_explorer_rows(
-        &self,
+    pub(super) fn append_explorer_rows<'a>(
+        &'a self,
         dir: &Path,
         depth: usize,
-        rows: &mut Vec<ExplorerRow>,
+        rows: &mut Vec<ExplorerRow<'a>>,
     ) {
-        if depth > 8 || rows.len() >= 250 {
-            return;
-        }
         if let Some(entries) = self.directory_cache.get(dir) {
             for entry in entries {
-                if rows.len() >= 250 {
-                    break;
-                }
                 let expanded = entry.is_dir && self.expanded_dirs.contains(&entry.path);
                 rows.push(ExplorerRow {
-                    entry: entry.clone(),
+                    entry,
                     depth,
                     expanded,
                 });

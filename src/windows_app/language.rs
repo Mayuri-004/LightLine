@@ -154,6 +154,15 @@ impl App {
         let Some(change) = tab.document.last_change().cloned() else {
             return;
         };
+        // Changes are incremental, so each must follow the last one sent. If
+        // one was skipped, the server's text differs from ours: reopen the
+        // file with its full text rather than send an edit that won't apply.
+        if change.serial != tab.lsp_serial.wrapping_add(1) {
+            self.close_lsp_tab(self.active);
+            self.tab_mut().diagnostics.clear();
+            self.ensure_lsp(self.hwnd);
+            return;
+        }
         let uri = lsp::file_uri(path);
         let version = tab.lsp_version.saturating_add(1);
         let range = LspRange {

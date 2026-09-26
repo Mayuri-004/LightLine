@@ -596,9 +596,9 @@ impl App {
                 }
                 0x5a if shift => {
                     self.view_mut().selection_anchor = None;
-                    if let Some((cursor, line)) = self.doc_mut().redo() {
+                    if let Some((cursor, _)) = self.doc_mut().redo() {
                         self.view_mut().cursor = cursor;
-                        self.syntax_changed(line);
+                        self.syntax_changed();
                         self.revalidate_other_view(None);
                         self.sync_lsp_edit();
                     }
@@ -613,7 +613,7 @@ impl App {
                     };
                     if let Some((cursor, line)) = applied {
                         self.view_mut().cursor = cursor;
-                        self.syntax_changed(line);
+                        self.syntax_changed();
                         self.revalidate_other_view(None);
                         self.sync_lsp_edit();
                         // Undo/redo report only the first changed line; a
@@ -1635,10 +1635,13 @@ impl App {
                 self.panel_focus = true;
                 let row = self.explorer_first_row
                     + ((y - self.scale(EXPLORER_TOP)) / self.scale(EXPLORER_ROW)) as usize;
-                if let Some(item) = self.explorer_rows().get(row) {
-                    let path = item.entry.path.clone();
+                let clicked = self
+                    .explorer_rows()
+                    .get(row)
+                    .map(|item| (item.entry.path.clone(), item.entry.is_dir));
+                if let Some((path, is_dir)) = clicked {
                     self.selected_explorer_path = Some(path.clone());
-                    if item.entry.is_dir {
+                    if is_dir {
                         if self.expanded_dirs.remove(&path) {
                             self.explorer_first_row = self
                                 .explorer_first_row
@@ -1848,10 +1851,14 @@ impl App {
         if panel_y >= row_top {
             let row_idx =
                 self.explorer_first_row + ((panel_y - row_top) / self.scale(EXPLORER_ROW)) as usize;
-            if let Some(row) = self.explorer_rows().get(row_idx) {
-                target_path = Some(row.entry.path.clone());
-                is_dir = row.entry.is_dir;
-                self.selected_explorer_path = Some(row.entry.path.clone());
+            let clicked = self
+                .explorer_rows()
+                .get(row_idx)
+                .map(|row| (row.entry.path.clone(), row.entry.is_dir));
+            if let Some((path, dir)) = clicked {
+                target_path = Some(path.clone());
+                is_dir = dir;
+                self.selected_explorer_path = Some(path);
             }
         }
 

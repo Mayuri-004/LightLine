@@ -1,8 +1,13 @@
 use std::collections::BTreeSet;
 use std::fs::{self, OpenOptions};
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
+
+/// Largest file opened as editable text. A document is held in memory as
+/// lines, several times its size on disk, so opening a larger file would
+/// freeze the editor for seconds or exhaust memory.
+pub const MAX_OPEN_BYTES: u64 = 128 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Pos {
@@ -18,6 +23,13 @@ pub struct TextChange {
     pub start_utf16: usize,
     pub end_utf16: usize,
     pub text: String,
+}
+
+impl TextChange {
+    /// Where the inserted text ends, i.e. `end` as it is after the change.
+    pub fn new_end(&self) -> Pos {
+        Document::end_of(self.start, &self.text)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -76,14 +88,36 @@ impl Document {
     }
 
     pub fn open(path: PathBuf) -> io::Result<Self> {
-        let bytes = fs::read(&path)?;
+        let mut file = fs::File::open(&path)?;
+        let metadata = file.metadata()?;
+        // A binary file is recognized from its first bytes (a NUL, the check
+        // Git uses), so a large one is never read whole just to be rejected.
+        let mut bytes = Vec::new();
+        (&mut file).take(8192).read_to_end(&mut bytes)?;
+        if bytes.contains(&0) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "This looks like a binary file",
+            ));
+        }
+        if metadata.len() > MAX_OPEN_BYTES {
+            const MIB: u64 = 1024 * 1024;
+            return Err(io::Error::new(
+                io::ErrorKind::FileTooLarge,
+                format!(
+                    "This file is too large to open ({} MiB); LightLine opens text files up to {} MiB",
+                    metadata.len() / MIB,
+                    MAX_OPEN_BYTES / MIB
+                ),
+            ));
+        }
+        file.read_to_end(&mut bytes)?;
         let bom = bytes.starts_with(&[0xef, 0xbb, 0xbf]);
         let text = std::str::from_utf8(if bom { &bytes[3..] } else { &bytes }).map_err(|_| {
             io::Error::new(io::ErrorKind::InvalidData, "Only UTF-8 files are supported")
         })?;
         let eol = if text.contains("\r\n") { "\r\n" } else { "\n" };
         let normalized = text.replace("\r\n", "\n");
-        let metadata = fs::metadata(&path)?;
         Ok(Self {
             lines: normalized.split('\n').map(str::to_owned).collect(),
             path: Some(path),
@@ -728,6 +762,22 @@ impl Document {
         })
     }
 
+    /// Every non-overlapping match of `query` from the top of the document
+    /// down, without wrapping around the way `find_forward` does.
+    pub fn find_all(&self, query: &str) -> Vec<Pos> {
+        if query.is_empty() {
+            return Vec::new();
+        }
+        self.lines
+            .iter()
+            .enumerate()
+            .flat_map(|(line, text)| {
+                text.match_indices(query)
+                    .map(move |(byte, _)| Pos { line, byte })
+            })
+            .collect()
+    }
+
     pub fn find_backward(&self, origin: Pos, query: &str) -> Option<Pos> {
         if query.is_empty() {
             return None;
@@ -883,26 +933,30 @@ impl Document {
                 Err(error) => return Err(error),
             }
         }
-        let (temp_path, mut file) = temporary.ok_or_else(|| {
+        let (temp_path, file) = temporary.ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::AlreadyExists,
                 "Could not create temporary save file",
             )
         })?;
+        // Buffered: writing each line and line ending straight to the file
+        // was one system call apiece, which took seconds on large files.
         let write_result = (|| -> io::Result<()> {
+            let mut writer = io::BufWriter::with_capacity(256 * 1024, file);
             if self.bom {
-                file.write_all(&[0xef, 0xbb, 0xbf])?;
+                writer.write_all(&[0xef, 0xbb, 0xbf])?;
             }
             for (i, line) in self.lines.iter().enumerate() {
                 if i > 0 {
-                    file.write_all(self.eol.as_bytes())?;
+                    writer.write_all(self.eol.as_bytes())?;
                 }
-                file.write_all(line.as_bytes())?;
+                writer.write_all(line.as_bytes())?;
             }
-            file.sync_all()?;
-            Ok(())
+            writer
+                .into_inner()
+                .map_err(|error| error.into_error())?
+                .sync_all()
         })();
-        drop(file);
         let result = write_result.and_then(|_| replace_file(&temp_path, path));
         if result.is_err() {
             let _ = fs::remove_file(&temp_path);
@@ -1005,6 +1059,17 @@ mod tests {
             std::fs::read(&path).unwrap(),
             b"\xef\xbb\xbfhello\r\nworld!"
         );
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn binary_files_are_rejected_from_their_first_bytes() {
+        let path =
+            std::env::temp_dir().join(format!("lightline-binary-{}.bin", std::process::id()));
+        // Valid UTF-8 throughout, but the NUL marks it as binary.
+        std::fs::write(&path, b"MZ\x00\x01 header then text").unwrap();
+        let error = Document::open(path.clone()).err().unwrap();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
         std::fs::remove_file(path).unwrap();
     }
 

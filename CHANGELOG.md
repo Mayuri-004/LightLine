@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+#### Changed
+- **No Terminal at Startup**: LightLine no longer starts a PowerShell session on every launch. Startup is faster, the Welcome screen shows again, and the editor keeps keyboard focus. `` Ctrl+` `` starts the first terminal when you need it.
+
+#### Fixed
+- **Replace All No Longer Hangs**: Replacing text with something that contains it (e.g. `foo` → `self.foo`) looped forever. Replace All now finds every match first and applies them as a single edit, which is also a single undo step.
+- **Fast Saves**: Saving wrote each line with its own system call; a 100,000-line file took about 2 seconds and now takes about 20 ms.
+- **No Color Flicker While Typing**: Rust and Python syntax colors no longer vanish on every keystroke until the parser catches up. The previous colors move with the text until the new ones arrive.
+- **Prettier Is Found on Windows**: Prettier installed through npm (`prettier.cmd`, `npx.cmd`) was always reported as missing, so formatting never ran. It is now found on `PATH`.
+- **Language Server Stays in Sync After Reloads**: When an open file changed on disk (e.g. `git checkout`), the language server kept the old text, so diagnostics and completions pointed at the wrong places. The file is now reopened with its new contents.
+- **Explorer, Quick Open and Search Show Every File**: The Explorer stopped at 250 rows, 9 folder levels and 400 entries per folder, and Quick Open and project search only saw the first 3,000 files. The Explorer limits are gone, and Quick Open and search now go up to 200,000 files (Quick Open says so if a workspace is larger).
+- **New Files in Subfolders Appear**: Only the workspace's top folder was watched, so files created in expanded subfolders (by a terminal or Git) didn't appear until a manual refresh.
+- **Large and Binary Files Open Safely**: Binary files are recognized from their first bytes and only the 64 KB the hex preview shows are read, instead of the whole file, twice. Text files over 128 MiB show an error instead of freezing LightLine.
+
 ## [v0.2.0] - 2026-09-26
 
 ### 2026-09-26

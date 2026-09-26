@@ -18,8 +18,11 @@ fn background_command(program: &str) -> Command {
     command
 }
 
-const MAX_FILES: usize = 3_000;
-const MAX_DEPTH: usize = 10;
+// Bounds on the Quick Open / project search file walk. They exist to stop a
+// runaway walk, not to trim ordinary projects: at 3,000 files and 10 levels,
+// files in medium-sized repositories were silently missing from both.
+pub const MAX_FILES: usize = 200_000;
+const MAX_DEPTH: usize = 64;
 const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_RESULTS: usize = 200;
 
@@ -632,14 +635,33 @@ pub fn detect_python_interpreter(root: Option<&Path>) -> Option<PathBuf> {
 /// so callers can surface a clear "not installed" message instead of letting
 /// the child process spawn fail (or, worse, run and crash midway through).
 pub fn command_available(name: &str) -> bool {
-    let Some(paths) = std::env::var_os("PATH") else {
-        return false;
+    resolve_command(name).is_some()
+}
+
+/// The full path `name` runs from, searched on PATH the way a Windows shell
+/// does: `.exe`, then the `.cmd`/`.bat` launchers npm installs for tools such
+/// as `prettier` and `npx`. `Command::new("prettier")` alone never finds
+/// those, because it only tries `.exe`.
+pub fn resolve_command(name: &str) -> Option<PathBuf> {
+    resolve_command_in(&std::env::var_os("PATH")?, name)
+}
+
+fn resolve_command_in(path_var: &std::ffi::OsStr, name: &str) -> Option<PathBuf> {
+    let candidates: Vec<String> = if !cfg!(windows) || Path::new(name).extension().is_some() {
+        vec![name.to_string()]
+    } else {
+        // An extensionless file next to a .cmd (npm's shell script for Git
+        // Bash) isn't runnable on Windows, so it is never a candidate.
+        [".exe", ".cmd", ".bat", ".com"]
+            .iter()
+            .map(|extension| format!("{name}{extension}"))
+            .collect()
     };
-    let candidates: &[String] = &[name.to_string(), format!("{name}.exe")];
-    std::env::split_paths(&paths).any(|directory| {
+    std::env::split_paths(path_var).find_map(|directory| {
         candidates
             .iter()
-            .any(|candidate| directory.join(candidate).is_file())
+            .map(|candidate| directory.join(candidate))
+            .find(|candidate| candidate.is_file())
     })
 }
 
@@ -1369,6 +1391,32 @@ mod tests {
 
     fn drain(rx: Receiver<String>) -> String {
         rx.into_iter().collect()
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn resolve_command_finds_npm_cmd_launchers_but_not_their_shell_scripts() {
+        let root = temp_dir("resolve-command");
+        let (npm, tools) = (root.join("npm"), root.join("tools"));
+        fs::create_dir_all(&npm).unwrap();
+        fs::create_dir_all(&tools).unwrap();
+        // What `npm install -g prettier` leaves: a shell script and a .cmd.
+        fs::write(npm.join("prettier"), "").unwrap();
+        fs::write(npm.join("prettier.cmd"), "").unwrap();
+        fs::write(tools.join("git.exe"), "").unwrap();
+        fs::write(tools.join("only-script"), "").unwrap();
+        let path_var = std::env::join_paths([&npm, &tools]).unwrap();
+        assert_eq!(
+            resolve_command_in(&path_var, "prettier"),
+            Some(npm.join("prettier.cmd"))
+        );
+        assert_eq!(
+            resolve_command_in(&path_var, "git"),
+            Some(tools.join("git.exe"))
+        );
+        assert_eq!(resolve_command_in(&path_var, "only-script"), None);
+        assert_eq!(resolve_command_in(&path_var, "missing"), None);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

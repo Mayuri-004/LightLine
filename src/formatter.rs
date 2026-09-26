@@ -138,6 +138,13 @@ fn run_formatter(mut command: Command, source: &str) -> Result<String, FormatErr
     Ok(String::from_utf8_lossy(&stdout).into_owned())
 }
 
+/// A command for a tool on PATH, by full path so npm's `prettier.cmd` and
+/// `npx.cmd` launchers are found. A missing tool keeps its bare name, whose
+/// spawn failure then reports `NotAvailable`.
+fn tool_command(name: &str) -> Command {
+    Command::new(crate::workflow::resolve_command(name).unwrap_or_else(|| name.into()))
+}
+
 /// Runs `prettier` directly, falling back to `npx --yes prettier` if the
 /// bare command isn't on PATH (mirrors how Prettier is probed elsewhere in
 /// LightLine, e.g. the Extensions panel's detect-only toggle).
@@ -180,7 +187,7 @@ impl Formatter for PrettierFormatter {
     }
 
     fn command(&self, path: &Path) -> Command {
-        let mut command = Command::new("prettier");
+        let mut command = tool_command("prettier");
         command.arg("--stdin-filepath").arg(path);
         command
     }
@@ -188,7 +195,7 @@ impl Formatter for PrettierFormatter {
     fn format(&self, source: &str, path: &Path) -> Result<String, FormatError> {
         match run_formatter(self.command(path), source) {
             Err(FormatError::NotAvailable) => {
-                let mut fallback = Command::new("npx");
+                let mut fallback = tool_command("npx");
                 fallback
                     .args(["--yes", "prettier", "--stdin-filepath"])
                     .arg(path);

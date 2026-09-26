@@ -39,7 +39,8 @@ pub(super) enum ExtensionInstallKind {
 }
 
 pub(super) enum WorkerMessage {
-    Files(PathBuf, Vec<PathBuf>),
+    // Workspace root, then each file with its lowercase relative path.
+    Files(PathBuf, Vec<(PathBuf, String)>),
     Search(PathBuf, String, Arc<AtomicBool>, Vec<SearchHit>),
     // Generation guards the status request: only the newest answer may paint,
     // because refreshes fire on activation, save and every completed action.
@@ -120,6 +121,31 @@ fn tab_index_after_close(current: usize, closed: usize, remaining: usize) -> usi
     } else {
         current
     }
+}
+
+// The single edit Replace All makes: the span from the first match to the end
+// of the last, rebuilt with every match replaced, plus the match count. All
+// matches are found before anything changes, so a replacement that contains
+// the query (`foo` -> `self.foo`) can never be matched again.
+pub(super) fn replace_all_edit(
+    doc: &Document,
+    query: &str,
+    replacement: &str,
+) -> Option<(Pos, Pos, String, usize)> {
+    let matches = doc.find_all(query);
+    let (first, last) = (*matches.first()?, *matches.last()?);
+    let after = |start: Pos| Pos {
+        line: start.line,
+        byte: start.byte + query.len(),
+    };
+    let mut text = String::new();
+    let mut from = first;
+    for &start in &matches {
+        text.push_str(&doc.text_range(from, start));
+        text.push_str(replacement);
+        from = after(start);
+    }
+    Some((first, after(last), text, matches.len()))
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -215,8 +241,10 @@ pub(super) struct ExplorerEntry {
     pub(super) is_dir: bool,
 }
 
-pub(super) struct ExplorerRow {
-    pub(super) entry: ExplorerEntry,
+// Borrowed from the directory cache: rows are rebuilt on every paint, and a
+// large expanded tree must not mean cloning thousands of paths each time.
+pub(super) struct ExplorerRow<'a> {
+    pub(super) entry: &'a ExplorerEntry,
     pub(super) depth: usize,
     pub(super) expanded: bool,
 }
@@ -286,11 +314,12 @@ impl Tab {
 
     // A read-only hex dump of a file that is neither valid UTF-8 text nor a
     // decodable image. `document` holds the generated dump text, which must
-    // never be edited or written back over the real bytes on disk.
-    fn new_binary_preview(path: PathBuf, bytes: &[u8]) -> Self {
+    // never be edited or written back over the real bytes on disk. `bytes`
+    // is the start of the file, which is `total` bytes long.
+    fn new_binary_preview(path: PathBuf, bytes: &[u8], total: u64) -> Self {
         let mut document = Document::new();
         document.path = Some(path);
-        document.seed(&binary_view::hex_dump(bytes));
+        document.seed(&binary_view::hex_dump(bytes, total));
         Self {
             document,
             views: [EditorView::default(), EditorView::default()],
@@ -450,7 +479,8 @@ pub(super) struct App {
     pub(super) quick_selected: usize,
     // First Quick Open row on screen; moves to keep the selection visible.
     pub(super) quick_first: usize,
-    pub(super) quick_files: Vec<PathBuf>,
+    // Every workspace file with its lowercase relative path (the match key).
+    pub(super) quick_files: Vec<(PathBuf, String)>,
     pub(super) quick_loading: bool,
     pub(super) search_input: bool,
     pub(super) project_query: String,
@@ -1205,6 +1235,10 @@ impl App {
                 #[cfg(windows)]
                 use std::os::windows::process::CommandExt;
                 let probe = |program: &str, args: &[&str]| {
+                    // By full path: npm installs prettier and npx as .cmd files.
+                    let Some(program) = workflow::resolve_command(program) else {
+                        return false;
+                    };
                     let mut cmd = std::process::Command::new(program);
                     cmd.args(args)
                         .stdin(std::process::Stdio::null())
@@ -1540,9 +1574,15 @@ impl App {
         self.show_active_tab(hwnd);
     }
 
-    pub(super) fn syntax_changed(&mut self, line: usize) {
-        if let Some(syntax) = &mut self.tab_mut().syntax {
-            syntax.invalidate_from(line);
+    // Tells the active tab's highlighter about the edit just recorded as the
+    // document's last change. Callers only call this after a real change.
+    pub(super) fn syntax_changed(&mut self) {
+        let tab = &mut self.tabs[self.active];
+        if let Some(syntax) = &mut tab.syntax {
+            match tab.document.last_change() {
+                Some(change) => syntax.edited(change),
+                None => syntax.invalidate_from(0),
+            }
         }
     }
 
@@ -1954,11 +1994,16 @@ impl App {
             return;
         }
         let lines_before = self.doc().line_count();
+        let serial_before = self.doc().change_serial();
         let cursor = self.doc_mut().replace(start, end, text);
         let delta = self.doc().line_count() as isize - lines_before as isize;
         self.shift_gutter_marks(start.line, end.line, delta);
         self.schedule_gutter_diff();
-        self.syntax_changed(start.line);
+        // A no-op replace records no change, and replaying the previous one
+        // would move the highlighter's colors a second time.
+        if self.doc().change_serial() != serial_before {
+            self.syntax_changed();
+        }
         self.view_mut().cursor = cursor;
         self.revalidate_other_view(Some((start, end, cursor)));
         self.sync_lsp_edit();
@@ -2067,24 +2112,15 @@ impl App {
             self.refresh(hwnd);
             return;
         }
-        let replacement = self.replace_query.clone();
-        let mut count = 0;
-        let mut pos = Pos::default();
-        while let Some(start) = self.doc().find_forward(pos, &self.find_query) {
-            let end = Pos {
-                line: start.line,
-                byte: start.byte + self.find_query.len(),
-            };
-            self.replace_range(start, end, &replacement);
-            count += 1;
-            pos = Pos {
-                line: start.line,
-                byte: start.byte + replacement.len(),
-            };
-            if pos.line >= self.doc().line_count() {
-                break;
+        let count = match replace_all_edit(self.doc(), &self.find_query, &self.replace_query) {
+            Some((start, end, text, count)) => {
+                // One edit: one undo step and one language-server change.
+                self.replace_range(start, end, &text);
+                self.view_mut().selection_anchor = None;
+                count
             }
-        }
+            None => 0,
+        };
         self.find_mode = false;
         self.replace_mode = false;
         self.status = format!("Replaced {} occurrence(s) of '{}'", count, self.find_query);
@@ -2110,6 +2146,7 @@ impl App {
         }
         let mut needs_refresh = false;
         let mut git_changed = false;
+        let mut reloaded = Vec::new();
         let visible = self.visible_lines(hwnd);
         for event in events {
             match event {
@@ -2119,7 +2156,7 @@ impl App {
                     git_changed = true;
                 }
                 lightline::watcher::WatchEvent::FileChanged(path) => {
-                    for tab in &mut self.tabs {
+                    for (index, tab) in self.tabs.iter_mut().enumerate() {
                         if tab
                             .document
                             .path
@@ -2150,6 +2187,7 @@ impl App {
                                     if let Some(syntax) = &mut tab.syntax {
                                         syntax.invalidate_from(0);
                                     }
+                                    reloaded.push(index);
                                     self.status = format!(
                                         "Reloaded: {}",
                                         path.file_name().unwrap_or_default().to_string_lossy()
@@ -2176,6 +2214,16 @@ impl App {
                     needs_refresh = true;
                 }
             }
+        }
+        // The language server still holds the old text, and later edits are
+        // sent as changes to it; reopen a reloaded file with its new text.
+        // A background tab reopens when it is next activated (ensure_lsp).
+        for &index in &reloaded {
+            self.close_lsp_tab(index);
+            self.tabs[index].diagnostics.clear();
+        }
+        if reloaded.contains(&self.active) {
+            self.ensure_lsp(hwnd);
         }
         if needs_refresh {
             // A reload (e.g. after Discard) replaces the buffer without going
@@ -2517,7 +2565,8 @@ impl App {
                 // Not valid UTF-8 text and not a decodable image: fall back to
                 // a read-only hex dump instead of refusing to open the file.
                 Err(error) if error.kind() == io::ErrorKind::InvalidData => {
-                    std::fs::read(&path).map(|bytes| Tab::new_binary_preview(path.clone(), &bytes))
+                    binary_view::read_preview(&path)
+                        .map(|(bytes, total)| Tab::new_binary_preview(path.clone(), &bytes, total))
                 }
                 Err(error) => Err(error),
             }
@@ -2607,7 +2656,7 @@ mod split_tests {
     #[test]
     fn binary_preview_tab_is_a_read_only_unsaved_hex_dump() {
         let bytes = [0x00, 0x01, 0xff, b'H', b'i'];
-        let tab = Tab::new_binary_preview(std::path::PathBuf::from("blob.bin"), &bytes);
+        let tab = Tab::new_binary_preview(std::path::PathBuf::from("blob.bin"), &bytes, 5);
         assert!(tab.binary_preview);
         assert!(tab.read_only());
         // Seeding must not mark the document dirty, so closing never prompts
@@ -2618,6 +2667,14 @@ mod split_tests {
         assert!(tab.document.line(0).ends_with("|...Hi|"));
     }
 
+    fn replace_all(doc: &mut Document, query: &str, replacement: &str) -> usize {
+        let Some((start, end, text, count)) = replace_all_edit(doc, query, replacement) else {
+            return 0;
+        };
+        doc.replace(start, end, &text);
+        count
+    }
+
     #[test]
     fn find_and_replace_all_replaces_all_occurrences() {
         let mut doc = Document::new();
@@ -2626,24 +2683,20 @@ mod split_tests {
             Pos::default(),
             "hello world hello rust hello",
         );
-        let query = "hello";
-        let replacement = "hi";
-        let mut count = 0;
-        let mut pos = Pos::default();
-        while let Some(start) = doc.find_forward(pos, query) {
-            let end = Pos {
-                line: start.line,
-                byte: start.byte + query.len(),
-            };
-            doc.replace(start, end, replacement);
-            count += 1;
-            pos = Pos {
-                line: start.line,
-                byte: start.byte + replacement.len(),
-            };
-        }
-        assert_eq!(count, 3);
+        assert_eq!(replace_all(&mut doc, "hello", "hi"), 3);
         assert_eq!(doc.line(0), "hi world hi rust hi");
+        assert_eq!(replace_all(&mut doc, "absent", "x"), 0);
+    }
+
+    #[test]
+    fn replace_all_terminates_when_the_replacement_contains_the_query() {
+        let mut doc = Document::new();
+        doc.replace(Pos::default(), Pos::default(), "foo bar\nx foo\nfoofoo");
+        assert_eq!(replace_all(&mut doc, "foo", "self.foo"), 4);
+        assert_eq!(doc.text(), "self.foo bar\nx self.foo\nself.fooself.foo");
+        // The whole replacement is a single undo step.
+        doc.undo();
+        assert_eq!(doc.text(), "foo bar\nx foo\nfoofoo");
     }
 
     #[test]

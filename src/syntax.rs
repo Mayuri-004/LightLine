@@ -1,7 +1,7 @@
 //! Tree-sitter colors for Rust and Python, with bounded lexical fallback for large Rust files.
 //! Oversized Python files (see `PARSE_LIMIT`) render as plain text instead.
 
-use crate::document::Document;
+use crate::document::{Document, TextChange};
 use std::marker::PhantomData;
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::thread;
@@ -59,6 +59,16 @@ impl Syntax {
         }
     }
 
+    /// Records an edit. Unlike `invalidate_from`, the last parse's colors stay
+    /// on screen (moved along with the text) until the reparse lands, so
+    /// typing doesn't flash the viewport uncolored on every keystroke.
+    pub fn edited(&mut self, change: &TextChange) {
+        match self {
+            Syntax::Rust(syntax) => syntax.edited(change),
+            Syntax::Python(syntax) => syntax.edited(change),
+        }
+    }
+
     pub fn advance_to(&mut self, document: &Document, target: usize, budget: usize) -> bool {
         match self {
             Syntax::Rust(syntax) => syntax.advance_to(document, target, budget),
@@ -109,6 +119,50 @@ fn compute_edit(before_src: &str, after_src: &str) -> InputEdit {
         old_end_position: point_at(before_src, old_end),
         new_end_position: point_at(after_src, new_end),
     }
+}
+
+// Moves spans computed for the text before `change` onto the text after it.
+// Spans before the edit stay, spans after it shift with the text, and a span
+// the edit happened inside of (typing in a string or comment) grows with it.
+// The freshly inserted text is uncolored until the next parse. Returns false
+// when `spans` doesn't cover the edited lines, so the caller can drop them.
+fn remap_spans(spans: &mut Vec<Vec<Span>>, change: &TextChange) -> bool {
+    let (start, old_end, new_end) = (change.start, change.end, change.new_end());
+    if old_end.line >= spans.len() {
+        return false;
+    }
+    let shift = |byte: usize| byte - old_end.byte + new_end.byte;
+    let single_line = start.line == old_end.line && start.line == new_end.line;
+    let mut head = Vec::new();
+    let mut tail = Vec::new();
+    for span in &spans[start.line] {
+        if single_line && span.start < start.byte && span.end > old_end.byte {
+            head.push(Span {
+                end: shift(span.end),
+                ..*span
+            });
+        } else if span.start < start.byte {
+            head.push(Span {
+                end: span.end.min(start.byte),
+                ..*span
+            });
+        }
+    }
+    for span in &spans[old_end.line] {
+        let contained = single_line && span.start < start.byte && span.end > old_end.byte;
+        if span.end > old_end.byte && !contained {
+            tail.push(Span {
+                start: shift(span.start.max(old_end.byte)),
+                end: shift(span.end),
+                color: span.color,
+            });
+        }
+    }
+    let mut lines = vec![Vec::new(); new_end.line - start.line + 1];
+    lines[0] = head;
+    lines.last_mut().expect("at least one line").extend(tail);
+    spans.splice(start.line..=old_end.line, lines);
+    true
 }
 
 fn spans_from_query(
@@ -215,6 +269,9 @@ pub struct RustSyntax {
     tree_spans: Option<Vec<Vec<Span>>>,
     parser_attempted: bool,
     dirty: bool,
+    // A parse of `revision` is in flight; meanwhile `tree_spans` holds the
+    // previous result, remapped through every edit made since.
+    pending: bool,
     revision: u64,
 }
 
@@ -356,6 +413,54 @@ impl<P: LangParser + Send + 'static> Worker<P> {
     }
 }
 
+// Sends the document to the parser thread when it changed, then takes the
+// result for the current revision if it has arrived. A failed parse or a dead
+// worker stops tree-sitter for this document (Rust then uses its lexical
+// fallback; Python shows plain text).
+fn poll_worker<P>(
+    worker: &mut Option<Worker<P>>,
+    tree_spans: &mut Option<Vec<Vec<Span>>>,
+    dirty: &mut bool,
+    pending: &mut bool,
+    revision: u64,
+    document: &Document,
+) {
+    let mut failed = false;
+    if *dirty {
+        *dirty = false;
+        let sent = within_parse_limit(document)
+            && worker.as_ref().is_some_and(|worker| {
+                let source = document.text_range(Default::default(), document.end());
+                worker.jobs.send(Job { revision, source }).is_ok()
+            });
+        failed = !sent;
+        *pending = sent;
+    }
+    if let Some(active) = worker.as_ref().filter(|_| !failed) {
+        loop {
+            match active.results.try_recv() {
+                Ok(result) if result.revision == revision => {
+                    *pending = false;
+                    failed = result.spans.is_none();
+                    *tree_spans = result.spans;
+                    break;
+                }
+                Ok(_) => {}
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    failed = true;
+                    break;
+                }
+            }
+        }
+    }
+    if failed {
+        *worker = None;
+        *tree_spans = None;
+        *pending = false;
+    }
+}
+
 fn point_at(source: &str, byte: usize) -> Point {
     let prefix = &source.as_bytes()[..byte];
     let row = prefix.iter().filter(|b| **b == b'\n').count();
@@ -380,6 +485,7 @@ impl RustSyntax {
             tree_spans: None,
             parser_attempted: false,
             dirty: false,
+            pending: false,
             revision: 0,
         }
     }
@@ -389,6 +495,17 @@ impl RustSyntax {
         self.dirty = true;
         self.revision = self.revision.wrapping_add(1);
         self.tree_spans = None;
+    }
+
+    pub fn edited(&mut self, change: &TextChange) {
+        self.states.truncate(change.start.line + 1);
+        self.dirty = true;
+        self.revision = self.revision.wrapping_add(1);
+        if let Some(spans) = &mut self.tree_spans
+            && !remap_spans(spans, change)
+        {
+            self.tree_spans = None;
+        }
     }
 
     /// Scan at most `budget` fallback lines and poll the background parser.
@@ -402,41 +519,16 @@ impl RustSyntax {
             }
         }
         if self.worker.is_some() {
-            if self.dirty {
-                if !within_parse_limit(document) {
-                    self.worker = None;
-                } else {
-                    let job = Job {
-                        revision: self.revision,
-                        source: document.text_range(Default::default(), document.end()),
-                    };
-                    if self.worker.as_ref().unwrap().jobs.send(job).is_err() {
-                        self.worker = None;
-                    }
-                }
-                self.dirty = false;
-            }
-            if let Some(worker) = &self.worker {
-                loop {
-                    match worker.results.try_recv() {
-                        Ok(result) if result.revision == self.revision => {
-                            self.tree_spans = result.spans;
-                            if self.tree_spans.is_none() {
-                                self.worker = None;
-                            }
-                            break;
-                        }
-                        Ok(_) => continue,
-                        Err(TryRecvError::Empty) => break,
-                        Err(TryRecvError::Disconnected) => {
-                            self.worker = None;
-                            break;
-                        }
-                    }
-                }
-            }
+            poll_worker(
+                &mut self.worker,
+                &mut self.tree_spans,
+                &mut self.dirty,
+                &mut self.pending,
+                self.revision,
+                document,
+            );
             if self.tree_spans.is_some() {
-                return true;
+                return !self.pending;
             }
         }
         let target = target.min(document.line_count().saturating_sub(1));
@@ -475,6 +567,8 @@ pub struct PythonSyntax {
     tree_spans: Option<Vec<Vec<Span>>>,
     parser_attempted: bool,
     dirty: bool,
+    // See RustSyntax::pending.
+    pending: bool,
     revision: u64,
 }
 
@@ -491,6 +585,7 @@ impl PythonSyntax {
             tree_spans: None,
             parser_attempted: false,
             dirty: false,
+            pending: false,
             revision: 0,
         }
     }
@@ -499,6 +594,16 @@ impl PythonSyntax {
         self.dirty = true;
         self.revision = self.revision.wrapping_add(1);
         self.tree_spans = None;
+    }
+
+    pub fn edited(&mut self, change: &TextChange) {
+        self.dirty = true;
+        self.revision = self.revision.wrapping_add(1);
+        if let Some(spans) = &mut self.tree_spans
+            && !remap_spans(spans, change)
+        {
+            self.tree_spans = None;
+        }
     }
 
     /// Polls the background parser. Files over `PARSE_LIMIT` never start one, so
@@ -512,41 +617,16 @@ impl PythonSyntax {
             }
         }
         if self.worker.is_some() {
-            if self.dirty {
-                if !within_parse_limit(document) {
-                    self.worker = None;
-                } else {
-                    let job = Job {
-                        revision: self.revision,
-                        source: document.text_range(Default::default(), document.end()),
-                    };
-                    if self.worker.as_ref().unwrap().jobs.send(job).is_err() {
-                        self.worker = None;
-                    }
-                }
-                self.dirty = false;
-            }
-            if let Some(worker) = &self.worker {
-                loop {
-                    match worker.results.try_recv() {
-                        Ok(result) if result.revision == self.revision => {
-                            self.tree_spans = result.spans;
-                            if self.tree_spans.is_none() {
-                                self.worker = None;
-                            }
-                            break;
-                        }
-                        Ok(_) => continue,
-                        Err(TryRecvError::Empty) => break,
-                        Err(TryRecvError::Disconnected) => {
-                            self.worker = None;
-                            break;
-                        }
-                    }
-                }
-            }
+            poll_worker(
+                &mut self.worker,
+                &mut self.tree_spans,
+                &mut self.dirty,
+                &mut self.pending,
+                self.revision,
+                document,
+            );
         }
-        self.worker.is_none() || self.tree_spans.is_some()
+        self.worker.is_none() || (self.tree_spans.is_some() && !self.pending)
     }
 
     pub fn spans(&self, line: usize) -> Vec<Span> {
@@ -847,6 +927,74 @@ mod tests {
         syntax.invalidate_from(0);
         settle(&mut syntax, &doc, 0);
         assert!(syntax.tree_spans.is_some());
+        assert!(
+            syntax
+                .spans(&doc, 0)
+                .iter()
+                .any(|span| span.color == Color::Comment)
+        );
+    }
+
+    #[test]
+    fn remapping_splits_and_moves_spans_with_a_line_break() {
+        let span = |start, end, color| Span { start, end, color };
+        let mut spans = vec![
+            vec![span(0, 2, Color::Keyword), span(3, 8, Color::String)],
+            vec![span(0, 4, Color::Comment)],
+        ];
+        // Enter at byte 5, inside the string.
+        let change = TextChange {
+            serial: 1,
+            start: Pos { line: 0, byte: 5 },
+            end: Pos { line: 0, byte: 5 },
+            start_utf16: 5,
+            end_utf16: 5,
+            text: "\n".into(),
+        };
+        assert!(remap_spans(&mut spans, &change));
+        assert_eq!(
+            spans,
+            vec![
+                vec![span(0, 2, Color::Keyword), span(3, 5, Color::String)],
+                vec![span(0, 3, Color::String)],
+                vec![span(0, 4, Color::Comment)],
+            ]
+        );
+    }
+
+    #[test]
+    fn edits_keep_the_previous_colors_until_the_reparse_lands() {
+        let mut doc = Document::new();
+        doc.replace(
+            Pos::default(),
+            Pos::default(),
+            "fn main() {}\nlet s = \"text\";",
+        );
+        let mut syntax = RustSyntax::new();
+        settle(&mut syntax, &doc, 1);
+        // A line inserted above moves the string's color down with it at once.
+        doc.replace(Pos::default(), Pos::default(), "// note\n");
+        syntax.edited(doc.last_change().unwrap());
+        assert!(syntax.tree_spans.is_some());
+        assert!(
+            syntax
+                .spans(&doc, 2)
+                .iter()
+                .any(|span| span.color == Color::String)
+        );
+        // Typing inside the string keeps the whole string colored.
+        let inside = Pos { line: 2, byte: 10 };
+        doc.replace(inside, inside, "more ");
+        syntax.edited(doc.last_change().unwrap());
+        let string = syntax
+            .spans(&doc, 2)
+            .into_iter()
+            .find(|span| span.color == Color::String)
+            .unwrap();
+        assert_eq!(&doc.line(2)[string.start..string.end], "\"tmore ext\"");
+        // The reparse still happens and replaces the remapped colors.
+        settle(&mut syntax, &doc, 2);
+        assert!(!syntax.pending);
         assert!(
             syntax
                 .spans(&doc, 0)

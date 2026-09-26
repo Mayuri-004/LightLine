@@ -603,9 +603,9 @@ pub fn run() -> io::Result<()> {
         } else {
             app.borrow_mut().restore_session(hwnd);
         }
-        // The approved workbench keeps a compact terminal dock available by
-        // default; it remains collapsible with Ctrl+` or the header close.
-        app.borrow_mut().open_terminal(hwnd);
+        // No shell starts here: launching PowerShell (and its profile) on every
+        // start cost startup time, hid the Welcome screen and took keyboard
+        // focus from the editor. Ctrl+` starts the first terminal on demand.
         // Reported only now: opening the startup file or session sets its own
         // status, which would otherwise replace this straight away.
         if let Err(error) = lightline::settings::Settings::try_load() {

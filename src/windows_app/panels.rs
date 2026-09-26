@@ -20,10 +20,20 @@ impl App {
             let tx = self.worker_tx.clone();
             self.worker_started(hwnd);
             std::thread::spawn(move || {
-                let _ = tx.send(WorkerMessage::Files(
-                    root.clone(),
-                    workflow::workspace_files(&root),
-                ));
+                // Each file's lowercase relative path is computed here once,
+                // so filtering per keystroke doesn't allocate for every file.
+                let files = workflow::workspace_files(&root)
+                    .into_iter()
+                    .map(|path| {
+                        let key = path
+                            .strip_prefix(&root)
+                            .unwrap_or(&path)
+                            .to_string_lossy()
+                            .to_ascii_lowercase();
+                        (path, key)
+                    })
+                    .collect();
+                let _ = tx.send(WorkerMessage::Files(root, files));
             });
         }
         unsafe { InvalidateRect(hwnd, null(), 0) };
@@ -268,15 +278,9 @@ impl App {
         let query = self.quick_query.to_ascii_lowercase();
         self.quick_files
             .iter()
-            .filter(|path| {
-                path.strip_prefix(self.workspace_root.as_deref().unwrap_or(Path::new("")))
-                    .unwrap_or(path)
-                    .to_string_lossy()
-                    .to_ascii_lowercase()
-                    .contains(&query)
-            })
+            .filter(|(_, key)| key.contains(&query))
             .take(50)
-            .cloned()
+            .map(|(path, _)| path.clone())
             .collect()
     }
 
@@ -541,6 +545,12 @@ impl App {
                     if self.workspace_root.as_ref() == Some(&root) =>
                 {
                     self.quick_loading = false;
+                    if files.len() >= workflow::MAX_FILES {
+                        self.status = format!(
+                            "Quick Open lists the first {} files of this workspace",
+                            workflow::MAX_FILES
+                        );
+                    }
                     self.quick_files = files;
                 }
                 WorkerMessage::Search(root, query, cancel, hits)

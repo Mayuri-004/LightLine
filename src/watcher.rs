@@ -23,6 +23,8 @@ enum WatchCommand {
     WatchFile(PathBuf),
     /// Remove a file from the watch set.
     UnwatchFile(PathBuf),
+    /// Stop watching every directory (the workspace was closed or replaced).
+    UnwatchDirectories,
     /// Shut down the watcher thread.
     Shutdown,
 }
@@ -60,6 +62,11 @@ impl FileWatcher {
     /// Begin watching a workspace directory for changes.
     pub fn watch_directory(&self, path: PathBuf) {
         let _ = self.commands.send(WatchCommand::WatchDirectory(path));
+    }
+
+    /// Stop watching all directories, e.g. when the workspace changes.
+    pub fn unwatch_directories(&self) {
+        let _ = self.commands.send(WatchCommand::UnwatchDirectories);
     }
 
     /// Track an open file for external modification detection.
@@ -131,6 +138,10 @@ fn watcher_thread(
                     watched_files.remove(&path);
                     file_stamps.remove(&path);
                 }
+                Ok(WatchCommand::UnwatchDirectories) => {
+                    watched_dirs.clear();
+                    dir_stamps.clear();
+                }
                 Ok(WatchCommand::Shutdown) => return,
                 Err(mpsc::TryRecvError::Empty) => break,
                 Err(mpsc::TryRecvError::Disconnected) => return,
@@ -191,6 +202,10 @@ fn watcher_thread(
             Ok(WatchCommand::UnwatchFile(path)) => {
                 watched_files.remove(&path);
                 file_stamps.remove(&path);
+            }
+            Ok(WatchCommand::UnwatchDirectories) => {
+                watched_dirs.clear();
+                dir_stamps.clear();
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => return,
