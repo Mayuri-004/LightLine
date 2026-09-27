@@ -585,7 +585,26 @@ impl App {
             {
                 let button = self.file_action_rect(hwnd);
                 match action {
-                    FileAction::PreviewMarkdown => self.paint_preview_icon(hdc, button),
+                    FileAction::PreviewMarkdown => {
+                        // Highlighted while the preview is open, like a toggle.
+                        if self.preview_beside().is_some() {
+                            let size = self.scale(26);
+                            let left = button.left + (button.right - button.left - size) / 2;
+                            let top = button.top + (button.bottom - button.top - size) / 2;
+                            Self::rounded_fill(
+                                hdc,
+                                RECT {
+                                    left,
+                                    top,
+                                    right: left + size,
+                                    bottom: top + size,
+                                },
+                                self.scale(5),
+                                self.theme.select_bg,
+                            );
+                        }
+                        self.paint_preview_icon(hdc, button);
+                    }
                     FileAction::Run => {
                         let left = button.left + self.scale(4);
                         let brush = CreateSolidBrush(self.theme.green);

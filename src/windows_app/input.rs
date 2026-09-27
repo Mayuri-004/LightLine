@@ -1826,7 +1826,7 @@ impl App {
             {
                 match action {
                     FileAction::Run => self.run_active_file(hwnd),
-                    FileAction::PreviewMarkdown => self.open_markdown_preview(hwnd, true),
+                    FileAction::PreviewMarkdown => self.toggle_markdown_preview(hwnd),
                 }
                 return;
             }

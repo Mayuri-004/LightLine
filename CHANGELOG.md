@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 #### Added
-- **Markdown Preview** ([#45](https://github.com/mehmoodulhaq570/LightLine/issues/45)): `.md` files and READMEs render inside LightLine. Run **Markdown: Open Preview** (`Ctrl+Shift+V`) for a preview tab, or **Markdown: Open Preview to the Side** to see it next to the file as you type. A Markdown file also gets an **Open Preview to the Side** button at the right end of the tab bar, where code files show their Run button.
+- **Markdown Preview** ([#45](https://github.com/mehmoodulhaq570/LightLine/issues/45)): `.md` files and READMEs render inside LightLine. Run **Markdown: Open Preview** (`Ctrl+Shift+V`) for a preview tab, or **Markdown: Open Preview to the Side** to see it next to the file as you type. A Markdown file also gets an **Open Preview to the Side** button at the right end of the tab bar, where code files show their Run button; it is highlighted while the preview is open, and clicking it again closes the preview.
   - Headings, paragraphs, bold/italic/strikethrough, inline code, links, numbered and nested lists, task lists, block quotes, code blocks, tables (with column alignment), rules and images are shown.
   - Web links open in your browser, links to other files in the workspace open in LightLine, and `#heading` links scroll to the heading. Links that point outside the workspace or use other schemes (`javascript:`, `file:`) are refused.
   - Local images are shown, including SVG. Images in a line of text, such as README badges, sit side by side in that line and keep their links.

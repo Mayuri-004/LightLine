@@ -624,7 +624,11 @@ impl App {
             && y >= button.top
             && y < button.bottom
         {
-            let hint = action.hint();
+            let hint = if action == FileAction::PreviewMarkdown && self.preview_beside().is_some() {
+                "Close Preview"
+            } else {
+                action.hint()
+            };
             if self.status != hint {
                 self.status = hint.into();
                 unsafe { InvalidateRect(hwnd, null(), 0) };

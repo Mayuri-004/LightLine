@@ -989,6 +989,53 @@ impl App {
 
     /// Opens the rendered preview of the active Markdown file: as its own
     /// tab, or `beside` the source in a split so edits show up as you type.
+    /// The tab index of the active Markdown file's preview when it is shown
+    /// in the other pane, beside the file.
+    pub(super) fn preview_beside(&self) -> Option<usize> {
+        let source = self.doc().path.as_ref()?;
+        if !self.split_visible {
+            return None;
+        }
+        let other = self.pane_tabs[1 - self.focused_pane];
+        self.tabs
+            .get(other)?
+            .markdown
+            .as_ref()
+            .filter(|preview| &preview.source == source)
+            .map(|_| other)
+    }
+
+    /// The tab bar's preview button: opens the preview beside the file, or
+    /// closes it again when it is already there.
+    pub(super) fn toggle_markdown_preview(&mut self, hwnd: HWND) {
+        match self.preview_beside() {
+            Some(index) => self.close_markdown_preview(hwnd, index),
+            None => self.open_markdown_preview(hwnd, true),
+        }
+    }
+
+    // Closes a preview shown beside its file and goes back to one pane
+    // showing the file, where it was scrolled to. A preview is never
+    // edited, so there is nothing to ask about saving.
+    fn close_markdown_preview(&mut self, hwnd: HWND, index: usize) {
+        let mut source = self.active;
+        if self.focused_pane == 1 {
+            self.tabs[source].views[0] = self.tabs[source].views[1].clone();
+        }
+        self.tabs.remove(index);
+        if source > index {
+            source -= 1;
+        }
+        self.cancel_transition(hwnd);
+        self.split_visible = false;
+        self.divider_dragging = false;
+        self.focused_pane = 0;
+        self.pane_tabs = [source, source];
+        self.active = source;
+        self.status = "Preview closed".into();
+        self.show_active_tab(hwnd);
+    }
+
     pub(super) fn open_markdown_preview(&mut self, hwnd: HWND, beside: bool) {
         let source = self
             .tab()
