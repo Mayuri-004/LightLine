@@ -177,7 +177,17 @@ The AI Assistant (the sparkle in the activity rail) chats about your code with a
 2. Open the AI Assistant and click **Connect to Ollama**. LightLine asks Ollama which models it has and picks a chat model made for code, never a cloud one.
 3. Type a question and press **Enter** (**Shift+Enter** for a new line). If code is selected in the editor, it is sent along; the panel shows which lines ("Includes app.rs, lines 40–82") before you send.
 
-Answers appear as they're written and are shown as Markdown; code blocks have a **Copy** button, and **Copy answer** copies the whole answer. **Esc** (or the square button) stops an answer, **+** starts a new chat, and the model name in the header switches models, refreshes the list or turns the assistant off.
+Answers appear as they're written and are shown as Markdown, with Rust and Python code in the editor's colors. **Esc** (or the square button) stops an answer, **+** starts a new chat, and the model name in the header switches models, refreshes the list or turns the assistant off.
+
+Each code block in an answer has three buttons:
+
+- **Insert** puts the code at the editor's cursor.
+- **Replace** puts it in place of the code the question was about (or of the current selection), as long as that file hasn't changed since.
+- **Copy** copies it.
+
+Inserted and replaced code takes the indentation of where it lands, so a block the model wrote at column 0 fits inside an indented function. Either one is a single step for **Ctrl+Z**.
+
+**From the editor:** right-click selected code for **AI: Explain / Fix / Write Tests for / Add Comments to Selection**. Right-click a red or yellow underline for **AI: Explain This Error** or **AI: Fix This Error**. The fix selects the lines it will rewrite, staying inside the error's block, so **Replace** puts the corrected code right back. The same actions are in the command palette (`Ctrl+P`, then `>AI:`). The right-click menu also has Cut, Copy, Paste and Select All.
 
 - **Other servers**: set `aiEndpoint` in `settings.json` to any OpenAI-compatible server, e.g. LM Studio (`http://localhost:1234`) or llama.cpp's server.
 - **Ollama's cloud models** (names ending in `cloud`, such as `gpt-oss:120b-cloud`) run on ollama.com, not on your PC. LightLine never picks one for you; if you choose one, the panel says your questions and code go to ollama.com.

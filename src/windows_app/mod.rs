@@ -3,6 +3,7 @@ mod app;
 mod binary_view;
 mod builtin_icons;
 mod dialog;
+mod editor_context;
 mod file_dialog;
 mod git;
 mod image_view;
@@ -18,6 +19,7 @@ use app::{
     ExtensionInstallKind, ExtensionsFilter, ExtensionsTab, FileAction, GitAction, SideView, Tab,
     TerminalPane, TerminalTab, WorkerMessage, is_c_family_path, is_cpp_path,
 };
+use editor_context::{EditorContextDiagnostic, EditorContextMenu};
 mod debugger;
 use debugger::{DEBUG_EVENT_MESSAGE, DebugConfig};
 mod input;

@@ -81,9 +81,9 @@ impl AiTask {
             AiTask::ExplainError => ("Explain this", "Explain this problem and how to fix it."),
             AiTask::FixError => (
                 "Fix this",
-                "Fix this problem. Reply with the corrected version of exactly the code \
-                 shown (all of its lines) in one code block, then say in one sentence what \
-                 you changed.",
+                "Fix this problem by rewriting the code at the end of this message. Reply \
+                 with only those lines, corrected and with the same indentation, in one \
+                 code block, then say in one sentence what you changed.",
             ),
         }
     }
@@ -299,6 +299,37 @@ fn common_indentation<'a>(lines: impl IntoIterator<Item = &'a str>) -> String {
         .min_by_key(|indent| indent.len())
         .unwrap_or("")
         .to_string()
+}
+
+/// Lines `first..=last` (an error) widened by up to `margin` lines each way,
+/// without leaving the error's block: a line indented less than the error's
+/// first line ends it (blank lines don't). Blank lines at the edges are
+/// dropped. `line` reads a line of the `count`-line document.
+fn block_around<'a>(
+    count: usize,
+    line: impl Fn(usize) -> &'a str,
+    first: usize,
+    last: usize,
+    margin: usize,
+) -> (usize, usize) {
+    let blank = |index: usize| line(index).trim().is_empty();
+    let depth = leading_whitespace(line(first)).len();
+    let inside = |index: usize| blank(index) || leading_whitespace(line(index)).len() >= depth;
+    let mut top = first;
+    while top > 0 && first - (top - 1) <= margin && inside(top - 1) {
+        top -= 1;
+    }
+    let mut bottom = last;
+    while bottom + 1 < count && bottom + 1 - last <= margin && inside(bottom + 1) {
+        bottom += 1;
+    }
+    while top < first && blank(top) {
+        top += 1;
+    }
+    while bottom > last && blank(bottom) {
+        bottom -= 1;
+    }
+    (top, bottom)
 }
 
 /// `code` from an answer, re-indented to go where the editor text is
@@ -598,13 +629,26 @@ impl App {
             return;
         };
         let lines = self.doc().line_count();
-        let margin = if task == AiTask::FixError {
-            ERROR_CONTEXT_FIX
+        let error_first = (diagnostic.range.start.line as usize).min(lines.saturating_sub(1));
+        let error_last =
+            (diagnostic.range.end.line as usize).clamp(error_first, lines.saturating_sub(1));
+        let (first, last) = if task == AiTask::FixError {
+            // The fix replaces these lines, so they stay inside the error's
+            // block: then the answer's code can take their indentation.
+            let doc = self.doc();
+            block_around(
+                lines,
+                |line| doc.line(line),
+                error_first,
+                error_last,
+                ERROR_CONTEXT_FIX,
+            )
         } else {
-            ERROR_CONTEXT_EXPLAIN
+            (
+                error_first.saturating_sub(ERROR_CONTEXT_EXPLAIN),
+                (error_last + ERROR_CONTEXT_EXPLAIN).min(lines.saturating_sub(1)),
+            )
         };
-        let first = (diagnostic.range.start.line as usize).saturating_sub(margin);
-        let last = (diagnostic.range.end.line as usize + margin).min(lines.saturating_sub(1));
         let start = Pos {
             line: first,
             byte: 0,
@@ -637,10 +681,29 @@ impl App {
         };
         let message = diagnostic.message.lines().next().unwrap_or("").trim();
         let line = diagnostic.range.start.line + 1;
+        let mut instruction = format!("{instruction}\n\nThe {kind}, on line {line}:\n{message}");
+        if task == AiTask::FixError {
+            // Only the error's block is rewritten; the lines around it help
+            // the model understand it.
+            let around_first = error_first.saturating_sub(ERROR_CONTEXT_EXPLAIN);
+            let around_last = (error_last + ERROR_CONTEXT_EXPLAIN).min(lines.saturating_sub(1));
+            if (around_first, around_last) != (first, last) {
+                let around: Vec<&str> = (around_first..=around_last)
+                    .map(|index| self.doc().line(index))
+                    .collect();
+                let (around, _) = clip_context(&around.join("\n"));
+                instruction.push_str(&format!(
+                    "\n\nSurrounding code (lines {}\u{2013}{}), for context only:\n```{}\n{around}\n```",
+                    around_first + 1,
+                    around_last + 1,
+                    context.language
+                ));
+            }
+        }
         self.ai_ask(
             hwnd,
             format!("{shown} {kind}: {message}"),
-            format!("{instruction}\n\nThe {kind}, on line {line}:\n{message}"),
+            instruction,
             Some(context),
         );
     }
@@ -1152,6 +1215,30 @@ mod tests {
         assert_eq!(fit_indentation("    y", "    ", "    x = ", false), "y");
         // Nothing to fit at column 0 of an unindented line.
         assert_eq!(fit_indentation("fn f() {}\n", "", "", false), "fn f() {}");
+    }
+
+    #[test]
+    fn a_fix_stays_inside_the_errors_block() {
+        let file = [
+            "def average(values):",
+            "    total = 0",
+            "    for v in values:",
+            "        total += v",
+            "    return total / len(value)",
+            "",
+            "",
+            "print(average([1, 2, 3]))",
+        ];
+        let line = |index: usize| file[index];
+        // The error is on line 5 (index 4): three lines up stay in the body,
+        // and going down stops at the blank lines before `print`.
+        assert_eq!(block_around(file.len(), line, 4, 4, 3), (1, 4));
+        // A top-level error may take any line around it.
+        assert_eq!(block_around(file.len(), line, 7, 7, 3), (4, 7));
+        // The margin limits the range; the `def` line above is outside it.
+        assert_eq!(block_around(file.len(), line, 1, 1, 1), (1, 2));
+        // Inside a nested block only that block's lines qualify.
+        assert_eq!(block_around(file.len(), line, 3, 3, 3), (3, 3));
     }
 
     #[test]

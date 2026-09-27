@@ -34,6 +34,9 @@ impl App {
         let ctrl = unsafe { GetKeyState(VK_CONTROL as i32) } < 0;
         let shift = unsafe { GetKeyState(VK_SHIFT as i32) } < 0;
         let alt = unsafe { GetKeyState(VK_MENU as i32) } < 0;
+        if self.editor_context_key(hwnd, key, ctrl, shift) {
+            return true;
+        }
         if alt && key == 0x5A && !ctrl && !shift && !self.terminal_focus && !self.welcome {
             self.toggle_word_wrap(hwnd);
             return true;
@@ -497,6 +500,13 @@ impl App {
                 }
                 0x50 => {
                     self.show_quick_open(hwnd);
+                    if shift {
+                        self.quick_query = ">".into();
+                    }
+                    return true;
+                }
+                0x45 if shift && self.ai_diagnostic_at_cursor().is_some() => {
+                    self.ai_run_task(hwnd, AiTask::ExplainError);
                     return true;
                 }
                 0x4f if shift => {
@@ -1192,6 +1202,9 @@ impl App {
     }
 
     pub(super) fn mouse_click(&mut self, hwnd: HWND, x: i32, y: i32, extend: bool) {
+        if self.editor_context_click(hwnd, x, y) {
+            return;
+        }
         self.clear_hover(hwnd);
         let mut rect = RECT::default();
         unsafe {
@@ -1894,18 +1907,6 @@ impl App {
     /// click and for the selection, then Cut, Copy, Paste and Select All.
     /// False when the click wasn't on editable text.
     fn editor_context_menu(&mut self, hwnd: HWND, x: i32, y: i32) -> bool {
-        use windows_sys::Win32::Graphics::Gdi::ClientToScreen;
-        const EXPLAIN_ERROR: usize = 1;
-        const FIX_ERROR: usize = 2;
-        const EXPLAIN: usize = 3;
-        const FIX: usize = 4;
-        const TESTS: usize = 5;
-        const COMMENTS: usize = 6;
-        const CUT: usize = 7;
-        const COPY: usize = 8;
-        const PASTE: usize = 9;
-        const SELECT_ALL: usize = 10;
-
         let mut rect = RECT::default();
         unsafe { GetClientRect(hwnd, &mut rect) };
         let bottom = rect.bottom
@@ -1947,86 +1948,14 @@ impl App {
         let selected = self.selection_range().is_some();
         let problem = self
             .ai_diagnostic_at_cursor()
-            .map(|diagnostic| match diagnostic.severity {
-                1 => "Error",
-                2 => "Warning",
-                _ => "Problem",
-            });
-        let chosen = unsafe {
-            let menu = CreatePopupMenu();
-            if menu.is_null() {
-                return true;
-            }
-            let add = |id: usize, label: &str, enabled: bool| {
-                let flags = if enabled {
-                    MF_STRING
-                } else {
-                    MF_STRING | MF_GRAYED
-                };
-                AppendMenuW(menu, flags, id, wide(label).as_ptr());
-            };
-            if let Some(kind) = problem {
-                add(EXPLAIN_ERROR, &format!("AI: Explain This {kind}"), true);
-                add(FIX_ERROR, &format!("AI: Fix This {kind}"), true);
-                AppendMenuW(menu, MF_SEPARATOR, 0, null());
-            }
-            add(EXPLAIN, "AI: Explain Selection", selected);
-            add(FIX, "AI: Fix Selection", selected);
-            add(TESTS, "AI: Write Tests for Selection", selected);
-            add(COMMENTS, "AI: Add Comments to Selection", selected);
-            AppendMenuW(menu, MF_SEPARATOR, 0, null());
-            add(CUT, "Cut\tCtrl+X", selected);
-            add(COPY, "Copy\tCtrl+C", selected);
-            add(PASTE, "Paste\tCtrl+V", true);
-            AppendMenuW(menu, MF_SEPARATOR, 0, null());
-            add(SELECT_ALL, "Select All\tCtrl+A", true);
-            let mut point = POINT { x, y };
-            ClientToScreen(hwnd, &mut point);
-            let chosen = TrackPopupMenu(
-                menu,
-                TPM_RETURNCMD | TPM_RIGHTBUTTON,
-                point.x,
-                point.y,
-                0,
-                hwnd,
-                null(),
-            ) as usize;
-            DestroyMenu(menu);
-            chosen
-        };
-        match chosen {
-            EXPLAIN_ERROR => self.ai_run_task(hwnd, AiTask::ExplainError),
-            FIX_ERROR => self.ai_run_task(hwnd, AiTask::FixError),
-            EXPLAIN => self.ai_run_task(hwnd, AiTask::Explain),
-            FIX => self.ai_run_task(hwnd, AiTask::Fix),
-            TESTS => self.ai_run_task(hwnd, AiTask::Tests),
-            COMMENTS => self.ai_run_task(hwnd, AiTask::Comments),
-            CUT => {
-                if self.copy_selection(hwnd) {
-                    self.replace_selection("");
-                }
-            }
-            COPY => {
-                self.copy_selection(hwnd);
-            }
-            PASTE => match clipboard::paste(hwnd) {
-                Ok(Some(text)) => self.replace_selection(&text),
-                Ok(None) => {}
-                Err(error) => self.error(hwnd, &error),
-            },
-            SELECT_ALL => {
-                self.view_mut().selection_anchor = Some(Pos::default());
-                let end = self.doc().end();
-                self.view_mut().cursor = end;
-            }
-            _ => {}
-        }
-        self.refresh(hwnd);
+            .map(|diagnostic| EditorContextDiagnostic::from_lsp(&diagnostic));
+        self.editor_context = Some(EditorContextMenu::new(x, y, problem, selected));
         unsafe { InvalidateRect(hwnd, null(), 0) };
         true
     }
 
     pub(super) fn mouse_right_click(&mut self, hwnd: HWND, x: i32, y: i32) {
+        self.dismiss_editor_context(hwnd);
         if self.terminal_visible {
             let mut rect = RECT::default();
             unsafe { GetClientRect(hwnd, &mut rect) };

@@ -31,6 +31,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Answers appear as they're written and are shown as Markdown. Code blocks have a **Copy** button, and **Copy answer** copies a whole answer. **Esc** or the Stop button ends an answer early; **+** starts a new chat.
   - The model menu in the header switches models, refreshes the list or turns the assistant off. The chosen model is saved as `aiModel`. LightLine picks a chat model made for code, and never one of Ollama's cloud models, which run on ollama.com; if you choose one yourself, the panel says so.
   - Nothing runs until you connect: no AI process, download or background work. Answers arrive on a worker thread, batched to about 20 screen updates a second, so a fast model can't slow typing, and editing never depends on the assistant.
+- **AI Actions in the Editor**: Code from the AI Assistant goes straight into your file, and the assistant can be asked about code without typing.
+  - Code blocks in answers have **Insert** (at the cursor), **Replace** (the code the question was about, or the selection) and **Copy** buttons. Inserted code takes the indentation of where it lands, so Python stays valid, and one **Ctrl+Z** undoes it. Replace is only offered while the original code is unchanged, so it can't overwrite edits made since.
+  - Right-clicking in the editor opens a menu (it did nothing before): **AI: Explain / Fix / Write Tests for / Add Comments to Selection**, **AI: Explain / Fix This Error** on an underlined problem, then Cut, Copy, Paste and Select All. The same AI actions are in the command palette as `AI: ...`, plus **AI: New Chat**.
+  - **Fix This Error** sends the lines around the error as context and selects just the error's block for the answer to replace.
+- **Colored Code Blocks**: Rust and Python code blocks in AI answers and in the Markdown preview use the editor's syntax colors.
 
 #### Changed
 - **No Terminal at Startup**: LightLine no longer starts a PowerShell session on every launch. Startup is faster, the Welcome screen shows again, and the editor keeps keyboard focus. `` Ctrl+` `` starts the first terminal when you need it.

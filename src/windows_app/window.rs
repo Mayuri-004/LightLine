@@ -155,6 +155,7 @@ unsafe extern "system" fn wnd_proc(
         }
         WM_KILLFOCUS => {
             app.focused = false;
+            app.dismiss_editor_context(hwnd);
             unsafe {
                 KillTimer(hwnd, 1);
             }
@@ -408,6 +409,9 @@ unsafe extern "system" fn wnd_proc(
             0
         }
         WM_MOUSEWHEEL => {
+            if app.editor_context.is_some() {
+                return 0;
+            }
             let delta = (wparam >> 16) as i16;
             let mut point = POINT::default();
             unsafe {
