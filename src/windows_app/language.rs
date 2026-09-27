@@ -618,7 +618,7 @@ impl App {
         // The tab strip's action button says what it does; this used to test
         // a stale spot in the title bar, so the Run hint never appeared.
         let button = self.file_action_rect(hwnd);
-        if let Some(action) = self.file_action()
+        if let Some(action) = self.shown_file_action(hwnd)
             && x >= button.left
             && x < button.right
             && y >= button.top
@@ -639,7 +639,7 @@ impl App {
             || self.quick_open
             || self.side_view == SideView::Review
             || x < self.editor_left()
-            || x >= rect.right
+            || x >= self.editor_right(hwnd)
             || y < self.editor_top()
             || y >= bottom
         {

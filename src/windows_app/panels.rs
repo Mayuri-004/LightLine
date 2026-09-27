@@ -588,6 +588,9 @@ impl App {
                 WorkerMessage::GitWrite(action, result) => {
                     self.git_write_finished(hwnd, &action, result);
                 }
+                WorkerMessage::FileAdded(generation, parent, target, result) => {
+                    self.add_file_finished(hwnd, generation, parent, target, result);
+                }
                 WorkerMessage::GutterDiff(path, _relative, head_text, result) => {
                     self.gutter_diff_finished(&path, head_text, result);
                 }

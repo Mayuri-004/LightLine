@@ -1152,8 +1152,7 @@ impl App {
                 self.refresh(hwnd);
             }
             WelcomeAction::AiAssistant => {
-                self.status = "AI Assistant is not installed".into();
-                self.refresh(hwnd);
+                self.toggle_ai_assistant(hwnd);
             }
             WelcomeAction::OpenFile => self.open(hwnd, None),
             WelcomeAction::OpenFolder => self.open_folder(hwnd),
@@ -1291,8 +1290,7 @@ impl App {
                 let chrome_top = self.chrome_top();
                 if y >= chrome_top && y <= chrome_top + self.scale(42) {
                     if x >= rect.right - gap - self.scale(30) {
-                        self.ai_assistant_visible = false;
-                        self.refresh(hwnd);
+                        self.toggle_ai_assistant(hwnd);
                         return;
                     }
                     if x >= rect.right - gap - self.scale(54) {
@@ -1349,10 +1347,7 @@ impl App {
                     2 => self.toggle_side_view(hwnd, SideView::Review),
                     3 => self.toggle_side_view(hwnd, SideView::Debug),
                     4 => self.toggle_side_view(hwnd, SideView::Extensions),
-                    5 => {
-                        self.status = "AI Assistant is planned for a future enhancement".into();
-                        self.refresh(hwnd);
-                    }
+                    5 => self.toggle_ai_assistant(hwnd),
                     _ => {}
                 }
             } else if y >= panel_bottom - self.scale(STATUS + 40) {
@@ -1802,7 +1797,7 @@ impl App {
                 return;
             }
             let button = self.file_action_rect(hwnd);
-            if let Some(action) = self.file_action()
+            if let Some(action) = self.shown_file_action(hwnd)
                 && x >= button.left
                 && x < button.right
             {
@@ -1814,7 +1809,11 @@ impl App {
             }
             let slot = ((x - editor_left).max(0) / self.scale(TAB_WIDTH).max(1)) as usize;
             let index = self.tab_first + slot;
-            if index < self.tabs.len() && !self.tabs[index].is_placeholder() {
+            // Only the tabs that fit are drawn; the space past them isn't a tab.
+            if slot < self.visible_tab_count(hwnd)
+                && index < self.tabs.len()
+                && !self.tabs[index].is_placeholder()
+            {
                 if (x - editor_left) % self.scale(TAB_WIDTH) >= self.scale(TAB_WIDTH - 30) {
                     self.close_tab(hwnd, index);
                 } else {
@@ -1833,6 +1832,9 @@ impl App {
         if self.split_visible {
             let pane = usize::from(x >= self.pane_divider(hwnd));
             self.focus_pane(hwnd, pane);
+        }
+        if x >= self.editor_right(hwnd) {
+            return;
         }
         let pane = self.focused_pane;
         if self.tabs[self.tab_for_pane(pane)].markdown.is_some() {
@@ -1960,6 +1962,7 @@ impl App {
 
             const CMD_NEW_FILE: usize = 1;
             const CMD_NEW_FOLDER: usize = 2;
+            const CMD_ADD_FILE: usize = 9;
             const CMD_REVEAL: usize = 3;
             const CMD_COPY_PATH: usize = 4;
             const CMD_COPY_REL_PATH: usize = 5;
@@ -1974,6 +1977,7 @@ impl App {
                 CMD_NEW_FOLDER,
                 wide("New Folder...").as_ptr(),
             );
+            AppendMenuW(menu, MF_STRING, CMD_ADD_FILE, wide("Add File...").as_ptr());
             AppendMenuW(menu, MF_SEPARATOR, 0, null());
             AppendMenuW(
                 menu,
@@ -2030,6 +2034,9 @@ impl App {
                 }
                 CMD_NEW_FOLDER => {
                     self.start_explorer_input(parent_dir, true, false, None, hwnd);
+                }
+                CMD_ADD_FILE => {
+                    self.add_file_to_project(hwnd, &parent_dir);
                 }
                 CMD_REVEAL => {
                     let path_str = clicked_path.to_string_lossy().to_string();

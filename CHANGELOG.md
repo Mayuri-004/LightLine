@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Color Themes Recolor All of LightLine**: An installed color theme used to change only the editor text and a few surfaces, while the sidebar, tabs, buttons, menus, dialogs, the Extensions panel and the terminal kept LightLine's midnight blue. Now every part of the window follows the theme, dark or light (e.g. Dracula Light, Catppuccin Latte), including the terminal's 16 colors and the window frame. Colors a theme doesn't define are worked out from its own palette, so they still match.
   - **Preferences: Color Theme** (command palette, or the Color Theme row under Active Capabilities in the Extensions panel) lists LightLine's own theme and every installed theme variant, so themes that ship several (Catppuccin Latte/Frappé/Macchiato/Mocha, Dracula/Dracula Light) can each be picked. Previously only the first one in the extension's first file was used.
   - The chosen theme is remembered as `"colorTheme"` in `settings.json` and comes back after a restart; before, LightLine started in its default theme every time. `colors` overrides still apply on top.
+- **Add File to Project** ([#54](https://github.com/mehmoodulhaq570/LightLine/pull/54)): Right-click a folder in the Explorer and choose **Add File...** to copy any file into it. A file of the same name is never overwritten, a failed copy leaves nothing behind, and large files copy in the background without freezing the window.
 
 #### Changed
 - **No Terminal at Startup**: LightLine no longer starts a PowerShell session on every launch. Startup is faster, the Welcome screen shows again, and the editor keeps keyboard focus. `` Ctrl+` `` starts the first terminal when you need it.
@@ -40,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Explorer, Quick Open and Search Show Every File**: The Explorer stopped at 250 rows, 9 folder levels and 400 entries per folder, and Quick Open and project search only saw the first 3,000 files. The Explorer limits are gone, and Quick Open and search now go up to 200,000 files (Quick Open says so if a workspace is larger).
 - **New Files in Subfolders Appear**: Only the workspace's top folder was watched, so files created in expanded subfolders (by a terminal or Git) didn't appear until a manual refresh.
 - **Large and Binary Files Open Safely**: Binary files are recognized from their first bytes and only the 64 KB the hex preview shows are read, instead of the whole file, twice. Text files over 128 MiB show an error instead of freezing LightLine.
+- **AI Assistant Panel Toggle** ([#28](https://github.com/mehmoodulhaq570/LightLine/issues/28)): The rail button and Welcome action now open and close the Assistant panel, and the editor resizes to fit. Opening it keeps Find/Replace open, clicks, hovers and scrolling over the panel no longer reach the editor behind it, and in a narrow window the panel shrinks to fit instead of running off the edge.
 
 ## [v0.2.0] - 2026-09-26
 

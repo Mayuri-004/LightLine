@@ -577,12 +577,7 @@ impl App {
                 );
             }
             // The active file's action button: run it, or preview Markdown.
-            if let Some(action) = self.file_action()
-                && editor_left
-                    + self.scale(TAB_WIDTH) * self.tabs.len().saturating_sub(self.tab_first) as i32
-                    + self.scale(12)
-                    < editor_card.right - self.scale(92)
-            {
+            if let Some(action) = self.shown_file_action(hwnd) {
                 let button = self.file_action_rect(hwnd);
                 match action {
                     FileAction::PreviewMarkdown => {
