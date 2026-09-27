@@ -541,12 +541,7 @@ impl App {
                     1,
                 );
             }
-            if Tab::is_runnable(self.doc())
-                && editor_left
-                    + self.scale(TAB_WIDTH) * self.tabs.len().saturating_sub(self.tab_first) as i32
-                    + self.scale(12)
-                    < editor_card.right - self.scale(92)
-            {
+            if self.run_button_visible(hwnd) {
                 let left = editor_card.right - self.scale(78);
                 let brush = CreateSolidBrush(self.theme.green);
                 let pen = CreatePen(PS_SOLID, 1, self.theme.green);

@@ -390,6 +390,11 @@ unsafe extern "system" fn wnd_proc(
                 app.scroll_quick_open(hwnd, delta as i32);
                 return 0;
             }
+            // The Assistant panel has nothing to scroll, and the editor and
+            // terminal behind its column shouldn't move either.
+            if app.ai_assistant_visible && !app.welcome && point.x >= app.editor_right(hwnd) {
+                return 0;
+            }
             let mut rect = RECT::default();
             unsafe { GetClientRect(hwnd, &mut rect) };
             if app.terminal_visible

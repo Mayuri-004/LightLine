@@ -1166,8 +1166,7 @@ impl App {
                 self.refresh(hwnd);
             }
             WelcomeAction::AiAssistant => {
-                self.status = "AI Assistant is not installed".into();
-                self.refresh(hwnd);
+                self.toggle_ai_assistant(hwnd);
             }
             WelcomeAction::OpenFile => self.open(hwnd, None),
             WelcomeAction::OpenFolder => self.open_folder(hwnd),
@@ -1271,8 +1270,7 @@ impl App {
                 let chrome_top = self.chrome_top();
                 if y >= chrome_top && y <= chrome_top + self.scale(42) {
                     if x >= rect.right - gap - self.scale(30) {
-                        self.ai_assistant_visible = false;
-                        self.refresh(hwnd);
+                        self.toggle_ai_assistant(hwnd);
                         return;
                     }
                     if x >= rect.right - gap - self.scale(54) {
@@ -1302,10 +1300,7 @@ impl App {
                     2 => self.toggle_side_view(hwnd, SideView::Review),
                     3 => self.toggle_side_view(hwnd, SideView::Debug),
                     4 => self.toggle_side_view(hwnd, SideView::Extensions),
-                    5 => {
-                        self.status = "AI Assistant is planned for a future enhancement".into();
-                        self.refresh(hwnd);
-                    }
+                    5 => self.toggle_ai_assistant(hwnd),
                     _ => {}
                 }
             } else if y >= panel_bottom - self.scale(STATUS + 40) {
@@ -1724,16 +1719,14 @@ impl App {
             unsafe { SetCapture(hwnd) };
             return;
         }
-        // The editor is a card inset from the window edge, so the tab strip's
-        // controls are measured from the card's right edge, not the window's.
-        let card_right = rect.right - self.chrome_gap();
+        let card_right = self.editor_right(hwnd);
         if y < self.tab_strip_bottom() {
             let command = self.command_center_rect(hwnd);
             if x >= command.left && x < command.right && y >= command.top && y < command.bottom {
                 self.show_quick_open(hwnd);
                 return;
             }
-            if Tab::is_runnable(self.doc())
+            if self.run_button_visible(hwnd)
                 && x >= card_right - self.scale(82)
                 && x < card_right - self.scale(50)
             {
@@ -1742,7 +1735,8 @@ impl App {
             }
             let slot = ((x - editor_left).max(0) / self.scale(TAB_WIDTH).max(1)) as usize;
             let index = self.tab_first + slot;
-            if index < self.tabs.len() {
+            // Only the tabs that fit are drawn; the space past them isn't a tab.
+            if slot < self.visible_tab_count(hwnd) && index < self.tabs.len() {
                 if (x - editor_left) % self.scale(TAB_WIDTH) >= self.scale(TAB_WIDTH - 30) {
                     self.close_tab(hwnd, index);
                 } else {
@@ -1761,6 +1755,9 @@ impl App {
         if self.split_visible {
             let pane = usize::from(x >= self.pane_divider(hwnd));
             self.focus_pane(hwnd, pane);
+        }
+        if x >= self.editor_right(hwnd) {
+            return;
         }
         let pane = self.focused_pane;
         let pane_left = self.pane_left(hwnd, pane);

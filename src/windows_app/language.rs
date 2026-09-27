@@ -622,7 +622,7 @@ impl App {
             || self.quick_open
             || self.side_view == SideView::Review
             || x < self.editor_left()
-            || x >= rect.right
+            || x >= self.editor_right(hwnd)
             || y < self.editor_top()
             || y >= bottom
         {

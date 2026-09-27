@@ -1299,13 +1299,18 @@ impl App {
         self.show_active_tab(hwnd);
     }
     pub(super) fn ai_width(&self, rect: RECT) -> i32 {
-        if self.ai_assistant_visible {
-            self.scale(360)
-                .min((rect.right - self.editor_left()) / 2)
-                .max(self.scale(260))
-        } else {
-            0
+        if !self.ai_assistant_visible {
+            return 0;
         }
+        let preferred = self
+            .scale(360)
+            .min((rect.right - self.editor_left()) / 2)
+            .max(self.scale(260));
+        // Only the room the editor can spare, so in a narrow window the
+        // panel narrows with it instead of running past the window's edge.
+        let gap = self.chrome_gap();
+        let spare = rect.right - gap - gap - self.editor_left() - self.scale(160);
+        preferred.min(spare).max(0)
     }
 
     pub(super) fn editor_right(&self, hwnd: HWND) -> i32 {
@@ -1314,8 +1319,7 @@ impl App {
         let gap = self.chrome_gap();
         let total_right = rect.right - gap;
         if self.ai_assistant_visible {
-            let ai_w = self.ai_width(rect);
-            (total_right - ai_w - gap).max(self.editor_left() + self.scale(160))
+            total_right - self.ai_width(rect) - gap
         } else {
             total_right
         }
@@ -1506,6 +1510,23 @@ impl App {
         unsafe { InvalidateRect(hwnd, null(), 0) };
     }
 
+    pub(super) fn toggle_ai_assistant(&mut self, hwnd: HWND) {
+        if self.welcome {
+            self.welcome = false;
+            self.ai_assistant_visible = true;
+            self.show_active_tab(hwnd);
+            return;
+        }
+        self.ai_assistant_visible = !self.ai_assistant_visible;
+        // Only the editor's width changed: keep the active tab in view and
+        // resize the scrollbar, but leave Find/Replace and the rest of the
+        // editor's state alone (show_active_tab would close them).
+        self.clear_hover(hwnd);
+        self.keep_active_tab_visible(hwnd);
+        self.update_scrollbar(hwnd);
+        unsafe { InvalidateRect(hwnd, null(), 0) };
+    }
+
     pub(super) fn code_left(&self, hwnd: HWND) -> i32 {
         self.pane_left(hwnd, self.focused_pane) + self.scale(GUTTER + PAD)
     }
@@ -1582,22 +1603,35 @@ impl App {
     }
 
     pub(super) fn visible_tab_count(&self, hwnd: HWND) -> usize {
-        let mut rect = RECT::default();
-        unsafe {
-            GetClientRect(hwnd, &mut rect);
-        }
-        ((rect.right - self.editor_left() - self.scale(120)) / self.scale(TAB_WIDTH).max(1)).max(1)
+        let right = self.editor_right(hwnd);
+        ((right - self.editor_left() - self.scale(120)) / self.scale(TAB_WIDTH).max(1)).max(1)
             as usize
     }
 
-    pub(super) fn show_active_tab(&mut self, hwnd: HWND) {
-        self.clear_hover(hwnd);
+    /// Whether the tab strip has room for the Run button after the tabs.
+    /// The painter and the click handler both ask this, so a button that
+    /// isn't drawn (e.g. while the Assistant narrows the editor) can't take
+    /// clicks meant for a tab.
+    pub(super) fn run_button_visible(&self, hwnd: HWND) -> bool {
+        Tab::is_runnable(self.doc())
+            && self.editor_left()
+                + self.scale(TAB_WIDTH) * self.tabs.len().saturating_sub(self.tab_first) as i32
+                + self.scale(12)
+                < self.editor_right(hwnd) - self.scale(92)
+    }
+
+    pub(super) fn keep_active_tab_visible(&mut self, hwnd: HWND) {
         let count = self.visible_tab_count(hwnd);
         if self.active < self.tab_first {
             self.tab_first = self.active;
         } else if self.active >= self.tab_first + count {
             self.tab_first = self.active + 1 - count;
         }
+    }
+
+    pub(super) fn show_active_tab(&mut self, hwnd: HWND) {
+        self.clear_hover(hwnd);
+        self.keep_active_tab_visible(hwnd);
         self.find_mode = false;
         self.replace_mode = false;
         self.dragging = false;
