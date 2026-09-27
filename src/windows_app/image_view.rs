@@ -47,6 +47,9 @@ pub(super) struct ImageAsset {
     bitmap: HBITMAP,
     pub(super) width: i32,
     pub(super) height: i32,
+    // Bitmap pixels per 96-dpi pixel: 1 for decoded files, the display scale
+    // for SVGs, which are rasterized at screen resolution to stay sharp.
+    pub(super) density: f32,
 }
 
 impl ImageAsset {
@@ -112,7 +115,117 @@ pub(super) fn load_image(path: &Path) -> Option<ImageAsset> {
             bitmap,
             width: width as i32,
             height: height as i32,
+            density: 1.0,
         })
+    }
+}
+
+/// Rasterizes an SVG at `density` bitmap pixels per 96-dpi pixel, over the
+/// same background color PNG transparency is composited onto. resvg only
+/// draws shapes: SVG scripts and links are never run or followed.
+pub(super) fn load_svg(bytes: &[u8], density: f32) -> Option<ImageAsset> {
+    use resvg::{tiny_skia, usvg};
+    let options = usvg::Options {
+        fontdb: svg_fonts(),
+        ..usvg::Options::default()
+    };
+    let tree = usvg::Tree::from_data(bytes, &options).ok()?;
+    let size = tree.size();
+    let width = (size.width() * density).ceil().clamp(1.0, 4096.0) as u32;
+    let height = (size.height() * density).ceil().clamp(1.0, 4096.0) as u32;
+    let mut pixmap = tiny_skia::Pixmap::new(width, height)?;
+    let transform = tiny_skia::Transform::from_scale(
+        width as f32 / size.width().max(1.0),
+        height as f32 / size.height().max(1.0),
+    );
+    resvg::render(&tree, transform, &mut pixmap.as_mut());
+    // Premultiplied RGBA over the background, as the BGRX a DIB expects.
+    let background = [
+        (IMAGE_BACKGROUND & 0xff) as u16,
+        ((IMAGE_BACKGROUND >> 8) & 0xff) as u16,
+        ((IMAGE_BACKGROUND >> 16) & 0xff) as u16,
+    ];
+    let mut bgrx = vec![0u8; (width * height * 4) as usize];
+    for (dst, src) in bgrx.chunks_exact_mut(4).zip(pixmap.data().chunks_exact(4)) {
+        let uncovered = 255 - u16::from(src[3]);
+        dst[0] = (u16::from(src[2]) + background[0] * uncovered / 255).min(255) as u8;
+        dst[1] = (u16::from(src[1]) + background[1] * uncovered / 255).min(255) as u8;
+        dst[2] = (u16::from(src[0]) + background[2] * uncovered / 255).min(255) as u8;
+    }
+    unsafe {
+        let mut info: BITMAPINFO = zeroed();
+        info.bmiHeader.biSize = size_of::<BITMAPINFOHEADER>() as u32;
+        info.bmiHeader.biWidth = width as i32;
+        info.bmiHeader.biHeight = -(height as i32);
+        info.bmiHeader.biPlanes = 1;
+        info.bmiHeader.biBitCount = 32;
+        info.bmiHeader.biCompression = BI_RGB;
+        let mut bits: *mut core::ffi::c_void = null_mut();
+        let bitmap = CreateDIBSection(null_mut(), &info, DIB_RGB_COLORS, &mut bits, null_mut(), 0);
+        if bitmap.is_null() || bits.is_null() {
+            return None;
+        }
+        std::ptr::copy_nonoverlapping(bgrx.as_ptr(), bits as *mut u8, bgrx.len());
+        Some(ImageAsset {
+            bitmap,
+            width: width as i32,
+            height: height as i32,
+            density,
+        })
+    }
+}
+
+// The fonts SVG text (a badge's label) is drawn with: a few standard Windows
+// fonts, loaded once. Without any, resvg silently drops all text; scanning
+// every installed font instead would stall the first SVG for a long time.
+fn svg_fonts() -> Arc<resvg::usvg::fontdb::Database> {
+    static FONTS: std::sync::OnceLock<Arc<resvg::usvg::fontdb::Database>> =
+        std::sync::OnceLock::new();
+    FONTS
+        .get_or_init(|| {
+            let mut fonts = resvg::usvg::fontdb::Database::new();
+            let folder = std::env::var_os("WINDIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(r"C:\Windows"))
+                .join("Fonts");
+            for file in [
+                "verdana.ttf",
+                "verdanab.ttf",
+                "arial.ttf",
+                "arialbd.ttf",
+                "segoeui.ttf",
+                "segoeuib.ttf",
+                "tahoma.ttf",
+                "times.ttf",
+                "consola.ttf",
+            ] {
+                let _ = fonts.load_font_file(folder.join(file));
+            }
+            fonts.set_sans_serif_family("Arial");
+            fonts.set_serif_family("Times New Roman");
+            fonts.set_monospace_family("Consolas");
+            Arc::new(fonts)
+        })
+        .clone()
+}
+
+/// Loads a picture file of either kind: SVG by content (badge services
+/// serve SVG without an extension), anything else through GDI+.
+pub(super) fn load_picture(path: &Path, density: f32) -> Option<ImageAsset> {
+    let head = {
+        use std::io::Read;
+        let mut head = Vec::new();
+        std::fs::File::open(path)
+            .ok()?
+            .take(1024)
+            .read_to_end(&mut head)
+            .ok()?;
+        head
+    };
+    if lightline::image_cache::is_svg(&head) {
+        load_svg(&std::fs::read(path).ok()?, density)
+    } else {
+        load_image(path)
     }
 }
 

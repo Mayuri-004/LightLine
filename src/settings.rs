@@ -22,6 +22,8 @@ pub struct Settings {
     pub smooth_scrolling: bool,
     pub parse_limit_kb: usize,
     pub default_terminal_profile: ShellKind,
+    /// Load web images in Markdown previews without asking first.
+    pub markdown_load_remote_images: bool,
     // Colors can be overridden; values are 0xRRGGBB.
     pub colors: HashMap<String, u32>,
 }
@@ -43,6 +45,7 @@ impl Default for Settings {
             smooth_scrolling: false,
             parse_limit_kb: 128,
             default_terminal_profile: ShellKind::PowerShell,
+            markdown_load_remote_images: false,
             colors: HashMap::new(),
         }
     }
@@ -130,6 +133,12 @@ impl Settings {
         if let Some(n) = value.get("parseLimitKb").and_then(|v| v.as_u64()) {
             settings.parse_limit_kb = (n as usize).clamp(32, 4096);
         }
+        if let Some(b) = value
+            .get("markdownLoadRemoteImages")
+            .and_then(|v| v.as_bool())
+        {
+            settings.markdown_load_remote_images = b;
+        }
         if let Some(s) = value
             .get("terminalDefaultProfile")
             .or_else(|| value.get("terminalShell"))
@@ -206,6 +215,10 @@ impl Settings {
             serde_json::Value::Number(self.parse_limit_kb.into()),
         );
         obj.insert(
+            "markdownLoadRemoteImages".into(),
+            serde_json::Value::Bool(self.markdown_load_remote_images),
+        );
+        obj.insert(
             "terminalDefaultProfile".into(),
             serde_json::Value::String(self.default_terminal_profile.name().to_string()),
         );
@@ -250,6 +263,17 @@ mod tests {
         };
         let loaded = Settings::parse(&s.to_json()).unwrap();
         assert!(loaded.format_on_save);
+    }
+
+    #[test]
+    fn markdown_remote_images_setting_round_trips() {
+        assert!(!Settings::default().markdown_load_remote_images);
+        let s = Settings {
+            markdown_load_remote_images: true,
+            ..Settings::default()
+        };
+        let loaded = Settings::parse(&s.to_json()).unwrap();
+        assert!(loaded.markdown_load_remote_images);
     }
 
     #[test]

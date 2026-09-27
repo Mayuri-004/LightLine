@@ -3,14 +3,35 @@
 //! paints code. There is no browser engine, so nothing in a file can run.
 
 use super::*;
+use lightline::image_cache;
 use lightline::markdown::{self, Align, Block, BlockKind, Inline, LinkTarget, Marker, Style};
 use std::cell::Cell;
+use std::sync::Mutex;
+use std::sync::atomic::AtomicU64;
 
 // WM_TIMER id that repaints (and so re-parses) once typing pauses.
 pub(super) const MARKDOWN_TIMER: usize = 10;
 const REFRESH_DELAY: Duration = Duration::from_millis(150);
 // Images larger than this on disk are described, not loaded.
 const MAX_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
+// Web images one preview may download; any more are described instead.
+const MAX_WEB_IMAGES: usize = 64;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Download {
+    Running,
+    Done,
+    Failed,
+}
+
+// Web image downloads, shared with the threads doing them. Each address is
+// fetched at most once per preview; a finished one bumps `generation` so
+// the next paint lays the document out again with the image in place.
+#[derive(Default)]
+struct Downloads {
+    state: Mutex<HashMap<String, Download>>,
+    generation: AtomicU64,
+}
 
 pub(super) struct MarkdownPreview {
     /// The Markdown file shown. Its open tab (if any) is the live source, so
@@ -18,6 +39,7 @@ pub(super) struct MarkdownPreview {
     pub(super) source: PathBuf,
     scroll: Cell<i32>,
     state: RefCell<ViewState>,
+    downloads: Arc<Downloads>,
 }
 
 #[derive(Default)]
@@ -29,8 +51,9 @@ struct ViewState {
     parsed_at: Option<Instant>,
     layout: Option<Layout>,
     fonts: Option<Fonts>,
-    // Loaded once per path; None records a file that couldn't be decoded.
-    images: HashMap<PathBuf, Option<image_view::ImageAsset>>,
+    // Loaded once per local path ("file:...") or web address; None records
+    // one that couldn't be decoded.
+    images: HashMap<String, Option<image_view::ImageAsset>>,
 }
 
 impl MarkdownPreview {
@@ -39,7 +62,13 @@ impl MarkdownPreview {
             source,
             scroll: Cell::new(0),
             state: RefCell::new(ViewState::default()),
+            downloads: Arc::default(),
         }
+    }
+
+    /// Lays the document out again, e.g. once web images were allowed.
+    pub(super) fn relayout(&self) {
+        self.state.borrow_mut().layout = None;
     }
 
     /// Forgets the parsed text, e.g. after the file was reloaded from disk.
@@ -180,7 +209,7 @@ enum Item {
     },
     Image {
         rect: RECT,
-        path: PathBuf,
+        key: String,
     },
     Check {
         rect: RECT,
@@ -188,13 +217,18 @@ enum Item {
     },
 }
 
+// What a layout depends on besides the text: content width, dpi, zoom,
+// finished downloads, and whether web images may load.
+type LayoutKey = (i32, u32, i32, u64, bool);
+
 struct Layout {
-    // Content width, dpi and zoom the layout was made for.
-    key: (i32, u32, i32),
+    key: LayoutKey,
     items: Vec<Item>,
     links: Vec<(RECT, String)>,
     anchors: Vec<(String, i32)>,
     height: i32,
+    // Web images not shown because loading them hasn't been allowed.
+    blocked: usize,
 }
 
 // One styled piece of a line being built.
@@ -207,6 +241,8 @@ struct Run {
     link: Option<String>,
     strike: bool,
     code: bool,
+    // An inline image: its key in ViewState::images and its height.
+    image: Option<(String, i32)>,
 }
 
 // Splits text into words that keep their trailing spaces, with each "\n"
@@ -264,7 +300,10 @@ struct Layouter<'a> {
     app: &'a App,
     hdc: HDC,
     fonts: &'a Fonts,
-    images: &'a mut HashMap<PathBuf, Option<image_view::ImageAsset>>,
+    images: &'a mut HashMap<String, Option<image_view::ImageAsset>>,
+    downloads: &'a Arc<Downloads>,
+    web_allowed: bool,
+    blocked: usize,
     document_dir: PathBuf,
     root: PathBuf,
     y: i32,
@@ -319,7 +358,10 @@ impl Layouter<'_> {
     ) {
         let height = line
             .iter()
-            .map(|run| self.fonts.height(run.font))
+            .map(|run| match &run.image {
+                Some((_, height)) => *height,
+                None => self.fonts.height(run.font),
+            })
             .max()
             .unwrap_or_else(|| self.fonts.height(base));
         let used = line.last().map_or(0, |run| run.x + run.width);
@@ -330,8 +372,21 @@ impl Layouter<'_> {
         }
         .max(0);
         for run in line.drain(..) {
-            let font_height = self.fonts.height(run.font);
             let x = left + shift + run.x;
+            if let Some((key, image_height)) = run.image {
+                let rect = RECT {
+                    left: x,
+                    top: self.y + height - image_height,
+                    right: x + run.width,
+                    bottom: self.y + height,
+                };
+                if let Some(url) = run.link {
+                    self.links.push((rect, url));
+                }
+                self.items.push(Item::Image { rect, key });
+                continue;
+            }
+            let font_height = self.fonts.height(run.font);
             let y = self.y + height - font_height;
             if run.code {
                 self.items.push(Item::Fill {
@@ -382,7 +437,9 @@ impl Layouter<'_> {
                     )
                     && last.link == run.link
                     && last.strike == run.strike
-                    && last.code == run.code =>
+                    && last.code == run.code
+                    && last.image.is_none()
+                    && run.image.is_none() =>
             {
                 last.text.push_str(&text);
                 last.width += width;
@@ -396,12 +453,15 @@ impl Layouter<'_> {
                 link: run.link.clone(),
                 strike: run.strike,
                 code: run.code,
+                image: None,
             }),
         }
         *x += width;
     }
 
-    // Lays out styled text wrapped to `width`, starting at `left`.
+    // Lays out styled text wrapped to `width`, starting at `left`. Images in
+    // the text flow like words; one that isn't available shows its
+    // description instead.
     fn wrap(
         &mut self,
         inlines: &[Inline],
@@ -415,57 +475,207 @@ impl Layouter<'_> {
         let mut line: Vec<Run> = Vec::new();
         let mut x = 0;
         for inline in inlines {
-            let style = Run {
+            let link_tone = if inline.link.is_some() {
+                Tone::Link
+            } else {
+                tone
+            };
+            let mut style = Run {
                 x: 0,
                 width: 0,
                 text: String::new(),
                 font: font_for(base, inline.style),
-                tone: if inline.link.is_some() {
-                    Tone::Link
-                } else {
-                    tone
-                },
+                tone: link_tone,
                 link: inline.link.clone(),
                 strike: inline.style.strike,
                 code: inline.style.code,
+                image: None,
             };
-            for piece in pieces(&inline.text) {
-                if piece == "\n" {
-                    self.finish_line(&mut line, left, width, align, base);
-                    x = 0;
-                    continue;
-                }
-                let mut piece = if x == 0 { piece.trim_start() } else { piece }.to_string();
-                if piece.is_empty() {
-                    continue;
-                }
-                let mut piece_width = self.measure(style.font, &piece);
-                if x > 0 && x + piece_width > width {
-                    self.finish_line(&mut line, left, width, align, base);
-                    x = 0;
-                    piece = piece.trim_start().to_string();
-                    if piece.is_empty() {
-                        continue;
+            let Some(image) = &inline.image else {
+                self.flow(
+                    &mut line,
+                    &mut x,
+                    &inline.text,
+                    &style,
+                    (left, width, align, base),
+                );
+                continue;
+            };
+            match self.picture(&image.url, image.width, width) {
+                Some((key, image_width, image_height)) => {
+                    if x > 0 && x + image_width > width {
+                        self.finish_line(&mut line, left, width, align, base);
+                        x = 0;
                     }
-                    piece_width = self.measure(style.font, &piece);
+                    style.x = x;
+                    style.width = image_width;
+                    style.image = Some((key, image_height));
+                    line.push(style);
+                    x += image_width;
                 }
-                // Longer than a whole line (a long URL): break it anywhere.
-                while x + piece_width > width && piece.chars().nth(1).is_some() {
-                    let at = self.fit(style.font, &piece, width - x);
-                    let head = piece[..at].to_string();
-                    let head_width = self.measure(style.font, &head);
-                    self.place(&mut line, &mut x, head, head_width, &style);
-                    self.finish_line(&mut line, left, width, align, base);
-                    x = 0;
-                    piece = piece[at..].to_string();
-                    piece_width = self.measure(style.font, &piece);
+                None => {
+                    let description = inline.text.trim();
+                    let label = if description.is_empty() {
+                        "[image]".to_string()
+                    } else {
+                        format!("[{description}]")
+                    };
+                    style.font = Font::Italic;
+                    if inline.link.is_none() {
+                        style.tone = Tone::Muted;
+                    }
+                    self.flow(
+                        &mut line,
+                        &mut x,
+                        &label,
+                        &style,
+                        (left, width, align, base),
+                    );
                 }
-                self.place(&mut line, &mut x, piece, piece_width, &style);
             }
         }
         if !line.is_empty() {
             self.finish_line(&mut line, left, width, align, base);
         }
+    }
+
+    // Adds `text` to the line being built, word by word, starting new lines
+    // as needed. `frame` is the wrap's left edge, width, alignment and base
+    // font.
+    fn flow(
+        &mut self,
+        line: &mut Vec<Run>,
+        x: &mut i32,
+        text: &str,
+        style: &Run,
+        frame: (i32, i32, Align, Font),
+    ) {
+        let (left, width, align, base) = frame;
+        for piece in pieces(text) {
+            if piece == "\n" {
+                self.finish_line(line, left, width, align, base);
+                *x = 0;
+                continue;
+            }
+            let mut piece = if *x == 0 { piece.trim_start() } else { piece }.to_string();
+            if piece.is_empty() {
+                continue;
+            }
+            let mut piece_width = self.measure(style.font, &piece);
+            if *x > 0 && *x + piece_width > width {
+                self.finish_line(line, left, width, align, base);
+                *x = 0;
+                piece = piece.trim_start().to_string();
+                if piece.is_empty() {
+                    continue;
+                }
+                piece_width = self.measure(style.font, &piece);
+            }
+            // Longer than a whole line (a long URL): break it anywhere.
+            while *x + piece_width > width && piece.chars().nth(1).is_some() {
+                let at = self.fit(style.font, &piece, width - *x);
+                let head = piece[..at].to_string();
+                let head_width = self.measure(style.font, &head);
+                self.place(line, x, head, head_width, style);
+                self.finish_line(line, left, width, align, base);
+                *x = 0;
+                piece = piece[at..].to_string();
+                piece_width = self.measure(style.font, &piece);
+            }
+            self.place(line, x, piece, piece_width, style);
+        }
+    }
+
+    // The loaded picture for an image address, sized for display within
+    // `max_width`: its key in `images`, width and height. None while a web
+    // image is downloading, when loading web images isn't allowed (counted
+    // in `blocked`), or when the image can't be read.
+    fn picture(
+        &mut self,
+        url: &str,
+        requested: Option<u32>,
+        max_width: i32,
+    ) -> Option<(String, i32, i32)> {
+        let (dpi, zoom) = (self.app.dpi, self.app.zoom);
+        let density = dpi as f32 * zoom as f32 / 9600.0;
+        let key = match markdown::resolve_link(url, &self.document_dir, &self.root) {
+            LinkTarget::File(path) => {
+                let key = format!("file:{}", path.display());
+                if !self.images.contains_key(&key) {
+                    let loaded = std::fs::metadata(&path)
+                        .is_ok_and(|meta| meta.is_file() && meta.len() <= MAX_IMAGE_BYTES)
+                        .then(|| image_view::load_picture(&path, density))
+                        .flatten();
+                    self.images.insert(key.clone(), loaded);
+                }
+                key
+            }
+            LinkTarget::Web(address) if address.to_ascii_lowercase().starts_with("http") => {
+                if !self.images.contains_key(&address) {
+                    // A cached copy needs no network, so it always shows.
+                    if let Some(path) = image_cache::cached(&address) {
+                        let loaded = image_view::load_picture(&path, density);
+                        self.images.insert(address.clone(), loaded);
+                    } else if self.web_allowed {
+                        self.download(&address);
+                        return None;
+                    } else {
+                        self.blocked += 1;
+                        return None;
+                    }
+                }
+                address
+            }
+            _ => return None,
+        };
+        let image = self.images.get(&key)?.as_ref()?;
+        let logical_width = (image.width as f32 / image.density).round().max(1.0) as i32;
+        let logical_height = (image.height as f32 / image.density).round().max(1.0) as i32;
+        let mut draw_width = scaled(logical_width, dpi, zoom).max(1);
+        let mut draw_height = scaled(logical_height, dpi, zoom).max(1);
+        // An HTML width="..." sets the size, keeping the proportions.
+        if let Some(requested) = requested.filter(|width| *width > 0) {
+            let target = scaled(requested.min(4096) as i32, dpi, zoom).max(1);
+            draw_height = (draw_height as i64 * target as i64 / draw_width as i64).max(1) as i32;
+            draw_width = target;
+        }
+        if draw_width > max_width {
+            draw_height = (draw_height as i64 * max_width as i64 / draw_width as i64).max(1) as i32;
+            draw_width = max_width;
+        }
+        Some((key, draw_width, draw_height))
+    }
+
+    // Starts downloading a web image on its own thread, once per address.
+    // When it ends, the window is asked to repaint and so lay out again.
+    fn download(&self, address: &str) {
+        {
+            let mut state = self
+                .downloads
+                .state
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            if state.contains_key(address) || state.len() >= MAX_WEB_IMAGES {
+                return;
+            }
+            state.insert(address.to_string(), Download::Running);
+        }
+        let downloads = Arc::clone(self.downloads);
+        let url = address.to_string();
+        let hwnd = self.app.hwnd as isize;
+        std::thread::spawn(move || {
+            let outcome = match image_cache::download(&url) {
+                Ok(_) => Download::Done,
+                Err(_) => Download::Failed,
+            };
+            downloads
+                .state
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .insert(url, outcome);
+            downloads.generation.fetch_add(1, Ordering::Release);
+            unsafe { PostMessageW(hwnd as HWND, WM_TIMER, MARKDOWN_TIMER, 0) };
+        });
     }
 
     fn fill(&mut self, left: i32, top: i32, right: i32, bottom: i32, tone: Tone) {
@@ -629,62 +839,20 @@ impl Layouter<'_> {
         }
     }
 
+    // An image on its own line (an HTML <img>): a line holding just that
+    // image, so it loads, sizes and falls back exactly like one in text.
     fn image(&mut self, url: &str, alt: &str, requested: Option<u32>, left: i32, width: i32) {
-        if let LinkTarget::File(path) = markdown::resolve_link(url, &self.document_dir, &self.root)
-            && image_view::is_image_path(&path)
-        {
-            let loaded = self.images.entry(path.clone()).or_insert_with(|| {
-                std::fs::metadata(&path)
-                    .is_ok_and(|meta| meta.len() <= MAX_IMAGE_BYTES)
-                    .then(|| image_view::load_image(&path))
-                    .flatten()
-            });
-            if let Some(image) = loaded {
-                let (dpi, zoom) = (self.app.dpi, self.app.zoom);
-                let mut draw_width = scaled(image.width, dpi, zoom).max(1);
-                let mut draw_height = scaled(image.height, dpi, zoom).max(1);
-                // An HTML width="..." sets the size, keeping the proportions.
-                if let Some(requested) = requested.filter(|w| *w > 0) {
-                    let target = scaled(requested.min(4096) as i32, dpi, zoom).max(1);
-                    draw_height =
-                        (draw_height as i64 * target as i64 / draw_width as i64).max(1) as i32;
-                    draw_width = target;
-                }
-                if draw_width > width {
-                    draw_height =
-                        (draw_height as i64 * width as i64 / draw_width as i64).max(1) as i32;
-                    draw_width = width;
-                }
-                let top = self.y;
-                self.items.push(Item::Image {
-                    rect: RECT {
-                        left,
-                        top,
-                        right: left + draw_width,
-                        bottom: top + draw_height,
-                    },
-                    path,
-                });
-                self.y = top + draw_height + self.s(12);
-                return;
-            }
-        }
-        // A web image (never downloaded) or one that couldn't be loaded.
-        let label = if alt.trim().is_empty() {
-            format!("[image: {url}]")
-        } else {
-            format!("[image: {}]", alt.trim())
-        };
         let inline = Inline {
-            text: label,
-            style: Style {
-                italic: true,
-                ..Style::default()
-            },
+            text: alt.to_string(),
+            style: Style::default(),
             link: None,
+            image: Some(markdown::ImageRef {
+                url: url.to_string(),
+                width: requested,
+            }),
         };
-        self.wrap(&[inline], Font::Body, Tone::Muted, left, width, Align::Left);
-        self.y += self.s(9);
+        self.wrap(&[inline], Font::Body, Tone::Text, left, width, Align::Left);
+        self.y += self.s(7);
     }
 
     fn table(
@@ -834,6 +1002,9 @@ impl App {
             unsafe { InvalidateRect(hwnd, null(), 0) };
             return;
         };
+        if self.web_image_folders.is_none() {
+            self.web_image_folders = Some(image_cache::allowed_folders());
+        }
         let source_index = self.tabs.iter().position(|tab| {
             tab.markdown.is_none() && tab.document.path.as_deref() == Some(source.as_path())
         });
@@ -963,10 +1134,14 @@ impl App {
         {
             state.fonts = Some(Fonts::new(self.dpi, self.zoom));
             state.layout = None;
+            // SVGs were rasterized for the old scale.
+            state.images.clear();
         }
-        let key = (width, self.dpi, self.zoom);
+        let (document_dir, root) = self.markdown_folders(&preview.source);
+        let web_allowed = self.web_images_allowed(&root);
+        let generation = preview.downloads.generation.load(Ordering::Acquire);
+        let key = (width, self.dpi, self.zoom, generation, web_allowed);
         if state.layout.as_ref().is_none_or(|layout| layout.key != key) {
-            let (document_dir, root) = self.markdown_folders(&preview.source);
             let ViewState {
                 blocks,
                 fonts,
@@ -980,6 +1155,9 @@ impl App {
                 hdc,
                 fonts,
                 images,
+                downloads: &preview.downloads,
+                web_allowed,
+                blocked: 0,
                 document_dir,
                 root,
                 y: 0,
@@ -996,17 +1174,21 @@ impl App {
                 items: layouter.items,
                 links: layouter.links,
                 anchors: layouter.anchors,
+                blocked: layouter.blocked,
             });
         }
         let state = &*state;
         let (Some(layout), Some(fonts)) = (state.layout.as_ref(), state.fonts.as_ref()) else {
             return;
         };
-        let viewport = bounds.bottom - bounds.top;
+        // The bar asking to load web images stays put while the page scrolls.
+        let banner = self.markdown_banner(bounds, layout.blocked);
+        let banner_height = banner.map_or(0, |(bar, _)| bar.bottom - bar.top);
+        let viewport = bounds.bottom - bounds.top - banner_height;
         let max_scroll = (layout.height + 2 * pad - viewport).max(0);
         let scroll = preview.scroll.get().clamp(0, max_scroll);
         preview.scroll.set(scroll);
-        let (origin_x, origin_y) = (bounds.left + pad, bounds.top + pad - scroll);
+        let (origin_x, origin_y) = (bounds.left + pad, bounds.top + banner_height + pad - scroll);
         unsafe {
             let saved = SaveDC(hdc);
             IntersectClipRect(hdc, bounds.left, bounds.top, bounds.right, bounds.bottom);
@@ -1086,8 +1268,8 @@ impl App {
                             );
                         }
                     }
-                    Item::Image { rect, path } if visible(rect.top, rect.bottom) => {
-                        if let Some(Some(image)) = state.images.get(path) {
+                    Item::Image { rect, key } if visible(rect.top, rect.bottom) => {
+                        if let Some(Some(image)) = state.images.get(key) {
                             image.draw(hdc, shift(rect));
                         }
                     }
@@ -1135,6 +1317,9 @@ impl App {
                     _ => {}
                 }
             }
+            if let Some((bar, button)) = banner {
+                self.paint_markdown_banner(hdc, bar, button, layout.blocked);
+            }
             if state.blocks.is_empty() {
                 SelectObject(hdc, self.ui_font);
                 let message = "Nothing to preview yet";
@@ -1151,6 +1336,94 @@ impl App {
             }
             RestoreDC(hdc, saved);
         }
+    }
+
+    // The bar shown above a preview whose web images aren't loaded, and its
+    // "Load images" button; None when nothing is blocked.
+    fn markdown_banner(&self, bounds: RECT, blocked: usize) -> Option<(RECT, RECT)> {
+        if blocked == 0 {
+            return None;
+        }
+        let bar = RECT {
+            left: bounds.left,
+            top: bounds.top,
+            right: bounds.right,
+            bottom: bounds.top + self.scale(38),
+        };
+        let button = RECT {
+            left: bar.right - self.scale(128),
+            top: bar.top + self.scale(6),
+            right: bar.right - self.scale(14),
+            bottom: bar.bottom - self.scale(6),
+        };
+        Some((bar, button))
+    }
+
+    fn paint_markdown_banner(&self, hdc: HDC, bar: RECT, button: RECT, blocked: usize) {
+        Self::fill(hdc, bar, self.theme.line_bg);
+        Self::fill(
+            hdc,
+            RECT {
+                top: bar.bottom - self.scale(1).max(1),
+                ..bar
+            },
+            self.theme.edge,
+        );
+        unsafe { SelectObject(hdc, self.ui_font) };
+        let message = format!(
+            "{blocked} web image{} not shown: LightLine only goes online when you allow it.",
+            if blocked == 1 { " is" } else { "s are" }
+        );
+        let text_clip = RECT {
+            right: button.left - self.scale(10),
+            ..bar
+        };
+        self.label_ellipsis(
+            hdc,
+            &message,
+            bar.left + self.scale(16),
+            bar.top + self.scale(9),
+            self.theme.muted,
+            text_clip,
+        );
+        Self::rounded_fill(hdc, button, self.scale(5), self.theme.blue);
+        let caption = "Load images";
+        let caption_x =
+            button.left + (button.right - button.left - self.text_width(hdc, caption)) / 2;
+        Self::label(
+            hdc,
+            caption,
+            caption_x,
+            bar.top + self.scale(9),
+            self.theme.editor_bg,
+            button,
+        );
+    }
+
+    fn web_images_allowed(&self, root: &Path) -> bool {
+        self.settings.markdown_load_remote_images
+            || self
+                .web_image_folders
+                .as_ref()
+                .is_some_and(|folders| folders.iter().any(|folder| folder == root))
+    }
+
+    // Remembers that previews in this file's folder (its workspace, or its
+    // own folder outside one) may load web images, then loads them.
+    fn allow_web_images(&mut self, hwnd: HWND, source: &Path) {
+        let (_, root) = self.markdown_folders(source);
+        if let Err(error) = image_cache::allow_folder(&root) {
+            self.status = format!("Web images load for now, but the choice wasn't saved: {error}");
+        } else {
+            self.status = "Loading web images...".into();
+        }
+        self.web_image_folders
+            .get_or_insert_with(Vec::new)
+            .push(root);
+        for preview in self.tabs.iter().filter_map(|tab| tab.markdown.as_ref()) {
+            preview.relayout();
+        }
+        unsafe { InvalidateRect(hwnd, null(), 0) };
     }
 
     /// Scrolls the active preview by `pixels` (positive is down). Painting
@@ -1187,8 +1460,29 @@ impl App {
             return;
         };
         let pad = self.markdown_padding();
-        let content_x = x - (self.pane_left(hwnd, pane) + pad);
-        let content_y = y - (self.editor_top() + pad) + preview.scroll.get();
+        let blocked = preview
+            .state
+            .borrow()
+            .layout
+            .as_ref()
+            .map_or(0, |layout| layout.blocked);
+        let pane_bounds = RECT {
+            left: self.pane_left(hwnd, pane),
+            top: self.editor_top(),
+            right: self.pane_right(hwnd, pane),
+            bottom: i32::MAX,
+        };
+        let mut banner_height = 0;
+        if let Some((bar, _)) = self.markdown_banner(pane_bounds, blocked) {
+            if y >= bar.top && y < bar.bottom && x >= bar.left && x < bar.right {
+                let source = preview.source.clone();
+                self.allow_web_images(hwnd, &source);
+                return;
+            }
+            banner_height = bar.bottom - bar.top;
+        }
+        let content_x = x - (pane_bounds.left + pad);
+        let content_y = y - (self.editor_top() + banner_height + pad) + preview.scroll.get();
         let (url, anchors) = {
             let state = preview.state.borrow();
             let Some(layout) = state.layout.as_ref() else {

@@ -13,7 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Markdown Preview** ([#45](https://github.com/mehmoodulhaq570/LightLine/issues/45)): `.md` files and READMEs render inside LightLine. Run **Markdown: Open Preview** (`Ctrl+Shift+V`) for a preview tab, or **Markdown: Open Preview to the Side** to see it next to the file as you type.
   - Headings, paragraphs, bold/italic/strikethrough, inline code, links, numbered and nested lists, task lists, block quotes, code blocks, tables (with column alignment), rules and images are shown.
   - Web links open in your browser, links to other files in the workspace open in LightLine, and `#heading` links scroll to the heading. Links that point outside the workspace or use other schemes (`javascript:`, `file:`) are refused.
-  - Local images are shown; web images are never downloaded and show their description instead. HTML in the file is never run: `<img>`, headings, text and line breaks are shown, and scripts, styles and embedded content are dropped.
+  - Local images are shown, including SVG. Images in a line of text, such as README badges, sit side by side in that line and keep their links.
+  - Web images load only when you allow it: a bar above the preview offers **Load images**, and the choice is remembered for that workspace (or set `"markdownLoadRemoteImages": true` to always allow). Downloads run in the background with a time and size limit and are cached in `%APPDATA%\LightLine\cache\images`, so each image is fetched once.
+  - HTML in the file is never run: `<img>`, headings, text and line breaks are shown, and scripts, styles and embedded content are dropped.
   - The preview only reads the file and updates shortly after you stop typing; unsaved changes are never touched.
 
 #### Changed

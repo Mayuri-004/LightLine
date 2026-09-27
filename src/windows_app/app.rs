@@ -629,6 +629,9 @@ pub(super) struct App {
     // The configuration picked in the Run & Debug dropdown; None follows the
     // active file (see App::auto_debug_config).
     pub(super) debug_config: Option<DebugConfig>,
+    // Folders whose Markdown previews may load web images; read from disk
+    // when the first preview opens.
+    pub(super) web_image_folders: Option<Vec<PathBuf>>,
 }
 
 // Everything the Debug side panel paints, kept separate from the live
@@ -1099,6 +1102,7 @@ impl App {
             debug_pending_breakpoints: Vec::new(),
             debug_sections_expanded: [true; 3],
             debug_config: None,
+            web_image_folders: None,
             extensions_search_active: false,
         }
     }

@@ -35,9 +35,20 @@ pub struct Style {
 /// A run of text with one style, and the link it belongs to, if any.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Inline {
+    /// The text, or for an image its description (alt text).
     pub text: String,
     pub style: Style,
     pub link: Option<String>,
+    /// Set when this piece is an image that flows with the text, such as a
+    /// badge; a badge wrapped in a link keeps that link.
+    pub image: Option<ImageRef>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ImageRef {
+    pub url: String,
+    /// Display width in pixels, from an HTML `<img width="...">`.
+    pub width: Option<u32>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -170,7 +181,10 @@ impl<'a> Builder<'a> {
     // item is open and hasn't shown its text yet, otherwise as a paragraph.
     fn flush(&mut self) {
         let inlines = std::mem::take(&mut self.inlines);
-        if inlines.iter().all(|inline| inline.text.trim().is_empty()) {
+        if inlines
+            .iter()
+            .all(|inline| inline.image.is_none() && inline.text.trim().is_empty())
+        {
             return;
         }
         let kind = match self.marker.take() {
@@ -194,9 +208,8 @@ impl<'a> Builder<'a> {
         match tag_name(tag).as_str() {
             "br" => self.text("\n", false),
             "img" if !tag.starts_with('/') => {
-                if let Some(image) = html_image(tag) {
-                    self.flush();
-                    self.push_block(image);
+                if let Some((image, alt)) = html_image_parts(tag) {
+                    self.push_image(image, alt);
                 }
             }
             _ => {}
@@ -216,13 +229,26 @@ impl<'a> Builder<'a> {
         };
         let link = self.links.last().cloned();
         match self.inlines.last_mut() {
-            Some(last) if last.style == style && last.link == link => last.text.push_str(text),
+            Some(last) if last.style == style && last.link == link && last.image.is_none() => {
+                last.text.push_str(text)
+            }
             _ => self.inlines.push(Inline {
                 text: text.to_string(),
                 style,
                 link,
+                image: None,
             }),
         }
+    }
+
+    // An image inside text (or a table cell) stays in the line, like a word.
+    fn push_image(&mut self, image: ImageRef, alt: String) {
+        self.inlines.push(Inline {
+            text: alt,
+            style: Style::default(),
+            link: self.links.last().cloned(),
+            image: Some(image),
+        });
     }
 
     fn event(&mut self, event: Event, offset: usize) {
@@ -414,19 +440,7 @@ impl<'a> Builder<'a> {
                 let Some((url, alt)) = self.image.take() else {
                     return;
                 };
-                if self.table.is_some() {
-                    // A table cell can't hold a block; show the description.
-                    self.text(&alt, false);
-                } else {
-                    // Images get their own block, between the text before
-                    // and after them.
-                    self.flush();
-                    self.push_block(BlockKind::Image {
-                        url,
-                        alt,
-                        width: None,
-                    });
-                }
+                self.push_image(ImageRef { url, width: None }, alt);
             }
             _ => {}
         }
@@ -486,12 +500,24 @@ fn attribute(tag: &str, name: &str) -> Option<String> {
     None
 }
 
-fn html_image(tag: &str) -> Option<BlockKind> {
+fn html_image_parts(tag: &str) -> Option<(ImageRef, String)> {
     let url = attribute(tag, "src").filter(|src| !src.trim().is_empty())?;
+    let width = attribute(tag, "width").and_then(|width| width.trim_end_matches("px").parse().ok());
+    Some((
+        ImageRef {
+            url: decode_entities(&url),
+            width,
+        },
+        decode_entities(&attribute(tag, "alt").unwrap_or_default()),
+    ))
+}
+
+fn html_image(tag: &str) -> Option<BlockKind> {
+    let (image, alt) = html_image_parts(tag)?;
     Some(BlockKind::Image {
-        url: decode_entities(&url),
-        alt: decode_entities(&attribute(tag, "alt").unwrap_or_default()),
-        width: attribute(tag, "width").and_then(|width| width.trim_end_matches("px").parse().ok()),
+        url: image.url,
+        alt,
+        width: image.width,
     })
 }
 
@@ -527,6 +553,7 @@ fn html_blocks(html: &str) -> Vec<BlockKind> {
             text: content,
             style: Style::default(),
             link: None,
+            image: None,
         }];
         blocks.push(match heading.take() {
             Some(level) => BlockKind::Heading(level, inlines),
@@ -797,12 +824,49 @@ mod tests {
         assert_eq!(blocks[3].kind, BlockKind::Rule);
         assert_eq!(
             blocks[4].kind,
-            BlockKind::Image {
-                url: "img/logo.png".into(),
-                alt: "logo".into(),
-                width: None
-            }
+            BlockKind::Paragraph(vec![Inline {
+                text: "logo".into(),
+                style: Style::default(),
+                link: None,
+                image: Some(ImageRef {
+                    url: "img/logo.png".into(),
+                    width: None
+                }),
+            }])
         );
+    }
+
+    #[test]
+    fn badges_stay_in_one_line_and_keep_their_links() {
+        let blocks = parse(
+            "[![Rust](https://x.io/rust.svg)](https://ci.example) [![MIT](https://x.io/mit.svg)](LICENSE)\n\n![](a.png)\n",
+        );
+        let BlockKind::Paragraph(line) = &blocks[0].kind else {
+            panic!("expected one paragraph: {blocks:?}");
+        };
+        let images: Vec<(&str, &str, Option<&str>)> = line
+            .iter()
+            .filter_map(|inline| {
+                let image = inline.image.as_ref()?;
+                Some((
+                    inline.text.as_str(),
+                    image.url.as_str(),
+                    inline.link.as_deref(),
+                ))
+            })
+            .collect();
+        assert_eq!(
+            images,
+            vec![
+                ("Rust", "https://x.io/rust.svg", Some("https://ci.example")),
+                ("MIT", "https://x.io/mit.svg", Some("LICENSE")),
+            ]
+        );
+        // An image with no description is still kept.
+        let BlockKind::Paragraph(alone) = &blocks[1].kind else {
+            panic!("expected the image's paragraph: {blocks:?}");
+        };
+        assert_eq!(alone[0].image.as_ref().unwrap().url, "a.png");
     }
 
     #[test]

@@ -135,6 +135,7 @@ Open settings with **`Ctrl+,`** or run **`>Open Settings (JSON)`** from `Ctrl+P`
   "minimap": true,
   "smoothScrolling": false,
   "parseLimitKb": 128,
+  "markdownLoadRemoteImages": false,
   "colors": {
     "editorBg": "#141820",
     "text": "#d8dee9",
@@ -194,7 +195,7 @@ Release builds of `lightline.exe` are built from this repository by the GitHub A
 
 **Privacy policy**
 
-LightLine does not collect or send usage data. It uses the network only for these features: searching and installing extensions (reads the public Zed extension registry and clones the extension's git repository); **Push**, **Pull** and **Fetch** in Source Control, which run `git` against your repository's own remote; **Python: Install debugpy**, which runs `pip install debugpy` from PyPI in the Output tab; and a one-time Pyright setup: the first time you open a Python file with Node.js and npm installed and no Pyright found, LightLine downloads Pyright from npm into `%APPDATA%\LightLine\pyright`. LightLine writes only inside its own folder at `%APPDATA%\LightLine` plus the files and folders you open, create, or edit; the one exception is **Python: Install debugpy**, which installs `debugpy` into your selected Python environment. LightLine can be removed by deleting `lightline.exe` and, optionally, the `%APPDATA%\LightLine` folder.
+LightLine does not collect or send usage data. It uses the network only for these features: searching and installing extensions (reads the public Zed extension registry and clones the extension's git repository); **Push**, **Pull** and **Fetch** in Source Control, which run `git` against your repository's own remote; **Python: Install debugpy**, which runs `pip install debugpy` from PyPI in the Output tab; web images in a Markdown preview, only after you click **Load images** for that workspace (or turn on `markdownLoadRemoteImages`), cached in `%APPDATA%\LightLine\cache\images`; and a one-time Pyright setup: the first time you open a Python file with Node.js and npm installed and no Pyright found, LightLine downloads Pyright from npm into `%APPDATA%\LightLine\pyright`. LightLine writes only inside its own folder at `%APPDATA%\LightLine` plus the files and folders you open, create, or edit; the one exception is **Python: Install debugpy**, which installs `debugpy` into your selected Python environment. LightLine can be removed by deleting `lightline.exe` and, optionally, the `%APPDATA%\LightLine` folder.
 
 ---
 
