@@ -93,6 +93,13 @@ impl App {
             ("Markdown: Open Preview to the Side", 37),
             ("View: Toggle Word Wrap (Alt+Z)", 38),
             ("Preferences: Color Theme", 39),
+            ("AI: Explain Selection", 40),
+            ("AI: Fix Selection", 41),
+            ("AI: Write Tests for Selection", 42),
+            ("AI: Add Comments to Selection", 43),
+            ("AI: Explain Error at Cursor", 44),
+            ("AI: Fix Error at Cursor", 45),
+            ("AI: New Chat", 46),
         ]
         .into_iter()
         .filter(|(name, _)| name.to_ascii_lowercase().contains(&query))
@@ -221,6 +228,18 @@ impl App {
                 Some(39) => {
                     let center = self.command_center_rect(hwnd);
                     self.show_color_theme_menu(hwnd, center.left, center.bottom);
+                }
+                Some(40) => self.ai_run_task(hwnd, AiTask::Explain),
+                Some(41) => self.ai_run_task(hwnd, AiTask::Fix),
+                Some(42) => self.ai_run_task(hwnd, AiTask::Tests),
+                Some(43) => self.ai_run_task(hwnd, AiTask::Comments),
+                Some(44) => self.ai_run_task(hwnd, AiTask::ExplainError),
+                Some(45) => self.ai_run_task(hwnd, AiTask::FixError),
+                Some(46) => {
+                    if !self.ai_assistant_visible {
+                        self.toggle_ai_assistant(hwnd);
+                    }
+                    self.ai_new_chat(hwnd);
                 }
                 _ => {}
             }

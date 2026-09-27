@@ -22,7 +22,7 @@ mod debugger;
 use debugger::{DEBUG_EVENT_MESSAGE, DebugConfig};
 mod input;
 mod language;
-use ai_chat::{AI_EVENT_MESSAGE, AiChat};
+use ai_chat::{AI_EVENT_MESSAGE, AiChat, AiTask};
 use language::LSP_EVENT_MESSAGE;
 use terminal::TERMINAL_EVENT_MESSAGE;
 mod render;

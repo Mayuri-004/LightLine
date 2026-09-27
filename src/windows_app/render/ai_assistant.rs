@@ -1,4 +1,5 @@
-use super::super::ai_chat::{ChatEntry, SUGGESTED_MODEL};
+use super::super::ai_chat::{AiAction, ChatEntry, SUGGESTED_MODEL, model_menu_models};
+use super::super::markdown_view::SNIPPET_CODE_HEADER;
 use super::super::*;
 use lightline::ai::{self, Role};
 
@@ -85,6 +86,9 @@ impl App {
             &lines[lines.len() - shown.min(lines.len())..],
             true,
         );
+        if self.ai.model_menu_open {
+            self.paint_ai_model_picker(hdc, rect, header_bottom);
+        }
     }
 
     fn paint_ai_header(&self, hdc: HDC, rect: RECT, header_bottom: i32) {
@@ -160,7 +164,11 @@ impl App {
                 );
                 Self::label(
                     hdc,
-                    "\u{25be}",
+                    if self.ai.model_menu_open {
+                        "\u{25b4}"
+                    } else {
+                        "\u{25be}"
+                    },
                     chip.right - s(16),
                     chip.top + s(4),
                     ui(195, 165, 255),
@@ -179,6 +187,353 @@ impl App {
             },
             self.theme.edge,
         );
+    }
+
+    /// The themed model picker. It deliberately stays within the assistant
+    /// card and above the composer, unlike the old native popup menu.
+    fn paint_ai_model_picker(&self, hdc: HDC, panel: RECT, header_bottom: i32) {
+        let s = |value: i32| self.scale(value);
+        let menu_top = header_bottom + s(8);
+        let menu = RECT {
+            left: panel.left + s(18),
+            top: menu_top,
+            right: panel.right - s(18),
+            bottom: (menu_top + s(420)).min(panel.bottom - s(78)),
+        };
+        if menu.right - menu.left < s(210) || menu.bottom - menu.top < s(240) {
+            return;
+        }
+
+        // A restrained shadow gives the popup elevation without the bright,
+        // disconnected appearance of a platform context menu.
+        Self::rounded_fill(
+            hdc,
+            RECT {
+                left: menu.left + s(4),
+                top: menu.top + s(5),
+                right: menu.right + s(4),
+                bottom: menu.bottom + s(5),
+            },
+            s(10),
+            ui(3, 9, 19),
+        );
+        self.panel_card(hdc, menu, s(10), ui(69, 75, 169), ui(10, 25, 47));
+
+        let search = RECT {
+            left: menu.left + s(12),
+            top: menu.top + s(12),
+            right: menu.right - s(12),
+            bottom: menu.top + s(54),
+        };
+        self.panel_card(hdc, search, s(8), ui(40, 75, 126), ui(13, 31, 57));
+        self.rail_icon(
+            hdc,
+            1,
+            search.left + s(12),
+            search.top + s(12),
+            ui(145, 174, 218),
+        );
+        unsafe { SelectObject(hdc, self.ui_font) };
+        let query_empty = self.ai.model_query.is_empty();
+        let query = if query_empty {
+            "Search models..."
+        } else {
+            &self.ai.model_query
+        };
+        let query_x = search.left + s(42);
+        self.label_ellipsis(
+            hdc,
+            query,
+            query_x,
+            search.top + s(11),
+            if query_empty {
+                self.theme.muted
+            } else {
+                self.theme.text
+            },
+            RECT {
+                left: query_x,
+                right: search.right - s(10),
+                ..search
+            },
+        );
+        if !query_empty {
+            let caret_x = (query_x + self.text_width(hdc, query)).min(search.right - s(10));
+            Self::fill(
+                hdc,
+                RECT {
+                    left: caret_x,
+                    top: search.top + s(10),
+                    right: caret_x + s(1).max(1),
+                    bottom: search.bottom - s(10),
+                },
+                ui(116, 190, 250),
+            );
+        }
+
+        let actions_top = menu.bottom - s(82);
+        Self::fill(
+            hdc,
+            RECT {
+                left: menu.left + s(1),
+                top: actions_top,
+                right: menu.right - s(1),
+                bottom: actions_top + s(1).max(1),
+            },
+            ui(31, 59, 99),
+        );
+        let refresh = RECT {
+            left: menu.left + s(8),
+            top: actions_top + s(7),
+            right: menu.right - s(8),
+            bottom: actions_top + s(38),
+        };
+        let turn_off = RECT {
+            top: refresh.bottom,
+            bottom: menu.bottom - s(7),
+            ..refresh
+        };
+        Self::label(
+            hdc,
+            "\u{21bb}",
+            refresh.left + s(10),
+            refresh.top + s(5),
+            ui(145, 174, 218),
+            refresh,
+        );
+        Self::label(
+            hdc,
+            if self.ai.connecting {
+                "Refreshing model list..."
+            } else {
+                "Refresh model list"
+            },
+            refresh.left + s(38),
+            refresh.top + s(5),
+            self.theme.text,
+            refresh,
+        );
+        Self::label(
+            hdc,
+            "\u{23fb}",
+            turn_off.left + s(10),
+            turn_off.top + s(5),
+            ui(145, 174, 218),
+            turn_off,
+        );
+        Self::label(
+            hdc,
+            "Turn off AI Assistant",
+            turn_off.left + s(38),
+            turn_off.top + s(5),
+            self.theme.text,
+            turn_off,
+        );
+
+        let models = model_menu_models(
+            &self.ai.models,
+            self.settings.ai_model.as_deref(),
+            &self.ai.model_query,
+        );
+        let first = self.ai.model_menu_first.min(models.len().saturating_sub(1));
+        let list = RECT {
+            left: menu.left + s(8),
+            top: search.bottom + s(9),
+            right: menu.right - s(8),
+            bottom: actions_top - s(5),
+        };
+        let row_height = s(36);
+        let section_height = s(22);
+        let current = self.settings.ai_model.as_deref();
+        let mut y = list.top;
+        let mut previous_cloud = None;
+        let mut visible_rows = 0usize;
+        let mut row_hits = Vec::new();
+        for model in models.iter().skip(first) {
+            if visible_rows >= 6 {
+                break;
+            }
+            let cloud = ai::is_cloud_model(model);
+            if previous_cloud != Some(cloud) {
+                if y + section_height + row_height > list.bottom {
+                    break;
+                }
+                let title = if cloud { "CLOUD" } else { "LOCAL" };
+                Self::label(
+                    hdc,
+                    title,
+                    list.left + s(8),
+                    y + s(2),
+                    ui(145, 174, 218),
+                    list,
+                );
+                let title_width = self.text_width(hdc, title);
+                Self::fill(
+                    hdc,
+                    RECT {
+                        left: list.left + s(18) + title_width,
+                        top: y + s(10),
+                        right: list.right - s(12),
+                        bottom: y + s(11),
+                    },
+                    ui(34, 64, 105),
+                );
+                y += section_height;
+                previous_cloud = Some(cloud);
+            }
+            if y + row_height > list.bottom {
+                break;
+            }
+
+            let row = RECT {
+                left: list.left,
+                top: y,
+                right: list.right - s(6),
+                bottom: y + row_height,
+            };
+            let selected = current == Some(model.as_str());
+            if selected {
+                self.panel_card(hdc, row, s(6), ui(73, 83, 170), ui(29, 37, 91));
+                Self::label(
+                    hdc,
+                    "\u{2713}",
+                    row.left + s(10),
+                    row.top + s(7),
+                    ui(71, 210, 250),
+                    row,
+                );
+            }
+
+            let icon = RECT {
+                left: row.left + s(31),
+                top: row.top + s(6),
+                right: row.left + s(55),
+                bottom: row.top + s(30),
+            };
+            if cloud {
+                let (letter, color) = if model.starts_with("gemma") {
+                    ("G", ui(66, 176, 112))
+                } else if model.starts_with("gpt") {
+                    ("AI", ui(106, 144, 205))
+                } else {
+                    ("N", ui(115, 190, 76))
+                };
+                Self::rounded_fill(hdc, icon, s(12), color);
+                let width = self.text_width(hdc, letter);
+                Self::label(
+                    hdc,
+                    letter,
+                    icon.left + (icon.right - icon.left - width) / 2,
+                    icon.top + s(4),
+                    label_on(color, 255, 255, 255),
+                    icon,
+                );
+            } else {
+                Self::rounded_fill(hdc, icon, s(6), ui(53, 37, 107));
+                self.sparkle_glyph(
+                    hdc,
+                    icon.left + s(5),
+                    icon.top + s(5),
+                    s(14),
+                    ui(167, 111, 242),
+                );
+            }
+
+            let meta = if selected {
+                "Selected"
+            } else if cloud {
+                "Cloud"
+            } else {
+                "Local"
+            };
+            let meta_width = self.text_width(hdc, meta);
+            if cloud && !selected {
+                let badge = RECT {
+                    left: row.right - meta_width - s(22),
+                    top: row.top + s(7),
+                    right: row.right - s(7),
+                    bottom: row.bottom - s(7),
+                };
+                Self::rounded_fill(hdc, badge, s(6), ui(24, 53, 92));
+                Self::label(
+                    hdc,
+                    meta,
+                    badge.left + s(8),
+                    badge.top + s(3),
+                    ui(157, 190, 232),
+                    badge,
+                );
+            } else {
+                Self::label(
+                    hdc,
+                    meta,
+                    row.right - meta_width - s(9),
+                    row.top + s(8),
+                    if selected {
+                        ui(71, 210, 250)
+                    } else {
+                        self.theme.muted
+                    },
+                    row,
+                );
+            }
+            self.label_ellipsis(
+                hdc,
+                model,
+                row.left + s(64),
+                row.top + s(8),
+                self.theme.text,
+                RECT {
+                    left: row.left + s(64),
+                    right: row.right - meta_width - s(32),
+                    ..row
+                },
+            );
+            row_hits.push((row, model.clone()));
+            y += row_height;
+            visible_rows += 1;
+        }
+
+        if models.is_empty() {
+            Self::label(
+                hdc,
+                "No matching models",
+                list.left + s(10),
+                list.top + s(12),
+                self.theme.muted,
+                list,
+            );
+        } else if models.len() > visible_rows {
+            let track = RECT {
+                left: list.right - s(3),
+                top: list.top + s(4),
+                right: list.right,
+                bottom: list.bottom - s(4),
+            };
+            Self::rounded_fill(hdc, track, s(2), ui(20, 45, 78));
+            let track_height = track.bottom - track.top;
+            let thumb_height =
+                ((track_height as usize * visible_rows) / models.len()).max(s(24) as usize) as i32;
+            let max_first = models.len().saturating_sub(visible_rows).max(1);
+            let offset = ((track_height - thumb_height) as usize * first / max_first) as i32;
+            Self::rounded_fill(
+                hdc,
+                RECT {
+                    top: track.top + offset,
+                    bottom: track.top + offset + thumb_height,
+                    ..track
+                },
+                s(2),
+                ui(70, 112, 170),
+            );
+        }
+
+        let mut hits = self.ai.hits.borrow_mut();
+        hits.model_menu = Some(menu);
+        hits.model_search = Some(search);
+        hits.model_rows = row_hits;
+        hits.model_refresh = Some(refresh);
+        hits.model_turn_off = Some(turn_off);
     }
 
     // The sparkle tile and title that open the setup and empty-chat views;
@@ -390,7 +745,7 @@ impl App {
                         right: area.left + width,
                         bottom,
                     };
-                    self.paint_ai_entry(hdc, entry, index + 1 == entries.len(), bounds, area);
+                    self.paint_ai_entry(hdc, index, entry, bounds, area);
                 }
                 top = bottom + gap;
             }
@@ -439,8 +794,10 @@ impl App {
         height
     }
 
-    fn paint_ai_entry(&self, hdc: HDC, entry: &ChatEntry, last: bool, bounds: RECT, clip: RECT) {
+    // Paints entry `index` of the conversation within `bounds`.
+    fn paint_ai_entry(&self, hdc: HDC, index: usize, entry: &ChatEntry, bounds: RECT, clip: RECT) {
         let s = |value: i32| self.scale(value);
+        let last = index + 1 == self.ai.entries.len();
         unsafe { SelectObject(hdc, self.ui_font) };
         let line_height = self.text_height(hdc) + s(4);
         if entry.role == Role::User {
@@ -499,28 +856,8 @@ impl App {
                 bounds.right - bounds.left,
             );
             self.paint_snippet(hdc, &entry.view, &self.ai.fonts, (bounds.left, y), clip);
-            // A Copy button in each code block's corner.
-            unsafe { SelectObject(hdc, self.ui_font) };
-            let copy_width = self.text_width(hdc, "Copy");
-            for (block, code) in entry.view.code_blocks() {
-                let button = RECT {
-                    left: bounds.left + block.right - copy_width - s(20),
-                    top: y + block.top + s(4),
-                    right: bounds.left + block.right - s(4),
-                    bottom: y + block.top + s(4) + line_height,
-                };
-                if visible(&button) {
-                    Self::rounded_fill(hdc, button, s(4), self.theme.sidebar_bg);
-                    Self::label(
-                        hdc,
-                        "Copy",
-                        button.left + s(8),
-                        button.top + s(1),
-                        self.theme.muted,
-                        clip,
-                    );
-                    self.ai.hits.borrow_mut().copies.push((button, code));
-                }
+            if !self.ai_receiving(last) {
+                self.paint_ai_code_toolbars(hdc, index, entry, (bounds.left, y), clip);
             }
             y += height;
         } else if thinking || self.ai_receiving(last) {
@@ -567,8 +904,87 @@ impl App {
                 self.ai
                     .hits
                     .borrow_mut()
-                    .copies
-                    .push((button, answer.to_string()));
+                    .actions
+                    .push((button, AiAction::Copy(answer.to_string())));
+            }
+        }
+    }
+
+    // The strip at the top of each code block in answer `index`: its
+    // language, and buttons that put the code into the editor (Insert at the
+    // cursor, Replace what the question was about) or copy it.
+    fn paint_ai_code_toolbars(
+        &self,
+        hdc: HDC,
+        index: usize,
+        entry: &ChatEntry,
+        (left, top): (i32, i32),
+        clip: RECT,
+    ) {
+        let s = |value: i32| self.scale(value);
+        unsafe { SelectObject(hdc, self.ui_font) };
+        let can_insert = self.ai_can_insert();
+        let can_replace = self.ai_replace_target(index).is_some();
+        for block in entry.view.code_blocks() {
+            let strip = RECT {
+                left: left + block.rect.left,
+                top: top + block.rect.top,
+                right: left + block.rect.right,
+                bottom: top + block.rect.top + s(SNIPPET_CODE_HEADER),
+            };
+            if strip.bottom <= clip.top || strip.top >= clip.bottom {
+                continue;
+            }
+            Self::fill(
+                hdc,
+                RECT {
+                    top: strip.bottom - s(1).max(1),
+                    ..strip
+                },
+                self.theme.edge,
+            );
+            let mut right = strip.right - s(6);
+            let mut buttons = vec![("Copy", AiAction::Copy(block.text.clone()))];
+            if can_replace {
+                buttons.push(("Replace", AiAction::Replace(block.text.clone(), index)));
+            }
+            if can_insert {
+                buttons.push(("Insert", AiAction::Insert(block.text.clone())));
+            }
+            for (label, action) in buttons {
+                let button = RECT {
+                    left: right - self.text_width(hdc, label) - s(16),
+                    top: strip.top + s(4),
+                    right,
+                    bottom: strip.bottom - s(5),
+                };
+                if button.left < strip.left + s(8) {
+                    break;
+                }
+                Self::rounded_fill(hdc, button, s(4), self.theme.sidebar_bg);
+                self.label_mid(
+                    hdc,
+                    label,
+                    button.left + s(8),
+                    (button.top + button.bottom) / 2,
+                    self.theme.text,
+                    button,
+                );
+                self.ai.hits.borrow_mut().actions.push((button, action));
+                right = button.left - s(6);
+            }
+            if !block.language.is_empty() {
+                self.label_mid(
+                    hdc,
+                    &block.language,
+                    strip.left + s(12),
+                    (strip.top + strip.bottom) / 2 - s(1),
+                    self.theme.muted,
+                    RECT {
+                        right: right - s(4),
+                        ..strip
+                    },
+                );
             }
         }
     }

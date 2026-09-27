@@ -273,6 +273,22 @@ impl Theme {
     pub(super) fn is_light(&self) -> bool {
         luminance(channels(self.editor_bg)) > luminance(channels(self.text))
     }
+
+    /// The color for a syntax role, wherever code is drawn.
+    pub(super) fn syntax(&self, color: lightline::syntax::Color) -> u32 {
+        use lightline::syntax::Color;
+        match color {
+            Color::Comment => self.comment,
+            Color::String => self.string,
+            Color::Keyword => self.keyword,
+            Color::Type => self.type_color,
+            Color::Number => self.number,
+            Color::Macro => self.macro_color,
+            Color::Function => self.function,
+            Color::Operator => self.operator,
+            Color::Attribute => self.attribute,
+        }
+    }
 }
 
 /// The colors every shade of a theme is expressed in: background, text,

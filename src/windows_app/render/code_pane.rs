@@ -399,18 +399,7 @@ impl App {
                         // settings.json "colors" override once, at startup,
                         // instead of re-checking a HashMap on every span of
                         // every repaint.
-                        let color = match span.color {
-                            Color::Comment => self.theme.comment,
-                            Color::String => self.theme.string,
-                            Color::Keyword => self.theme.keyword,
-                            Color::Type => self.theme.type_color,
-                            Color::Number => self.theme.number,
-                            Color::Macro => self.theme.macro_color,
-                            Color::Function => self.theme.function,
-                            Color::Operator => self.theme.operator,
-                            Color::Attribute => self.theme.attribute,
-                        };
-                        SetTextColor(hdc, color);
+                        SetTextColor(hdc, self.theme.syntax(span.color));
                         let text = safe_slice_range(source, from, to)
                             .replace('\t', &" ".repeat(self.settings.tab_size));
                         let chars: Vec<u16> = text.encode_utf16().collect();

@@ -94,6 +94,26 @@ impl Syntax {
     }
 }
 
+// Code longer than this is shown without colors outside the editor.
+const SNIPPET_LIMIT: usize = 64 * 1024;
+
+/// Colors for a standalone piece of code, such as a fenced block in
+/// Markdown or an AI answer: one span list per line (byte ranges within the
+/// line, later spans drawn over earlier ones). None for a language without
+/// a grammar here, or for code too long to color quickly.
+pub fn highlight_snippet(language: &str, source: &str) -> Option<Vec<Vec<Span>>> {
+    if source.len() > SNIPPET_LIMIT {
+        return None;
+    }
+    match language.trim().to_ascii_lowercase().as_str() {
+        "rust" | "rs" => ParsedRust::new(source.to_string()).map(|parsed| parsed.all_spans()),
+        "python" | "py" | "python3" => {
+            ParsedPython::new(source.to_string()).map(|parsed| parsed.all_spans())
+        }
+        _ => None,
+    }
+}
+
 /// Parses one incremental snapshot on a background worker thread.
 trait LangParser: Sized {
     fn new(source: String) -> Option<Self>;
@@ -854,6 +874,34 @@ fn scan(source: &str, mut state: State, mut spans: Option<&mut Vec<Span>>) -> St
 mod tests {
     use super::*;
     use crate::document::Pos;
+
+    #[test]
+    fn snippets_are_colored_by_their_fence_language() {
+        let colors = |language: &str, source: &str, line: usize| {
+            highlight_snippet(language, source).map(|lines| {
+                lines[line]
+                    .iter()
+                    .map(|span| {
+                        (
+                            source.split('\n').nth(line).unwrap()[span.start..span.end].to_string(),
+                            span.color,
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })
+        };
+        let rust = colors("rust", "fn main() {\n    let x = \"hi\";\n}", 1).unwrap();
+        assert!(rust.contains(&("let".into(), Color::Keyword)), "{rust:?}");
+        assert!(rust.contains(&("\"hi\"".into(), Color::String)), "{rust:?}");
+        let python = colors("py", "def f():\n    return 42", 1).unwrap();
+        assert!(
+            python.contains(&("return".into(), Color::Keyword)),
+            "{python:?}"
+        );
+        assert!(python.contains(&("42".into(), Color::Number)), "{python:?}");
+        assert!(highlight_snippet("cobol", "DISPLAY 'HI'.").is_none());
+        assert!(highlight_snippet("rust", &"x".repeat(SNIPPET_LIMIT + 1)).is_none());
+    }
 
     fn settle(syntax: &mut RustSyntax, doc: &Document, line: usize) {
         for _ in 0..500 {

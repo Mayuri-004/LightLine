@@ -189,6 +189,17 @@ enum Tone {
     Edge,
     QuoteBar,
     TableHead,
+    // Code in a fenced block, colored like the editor.
+    Syntax(Color),
+}
+
+/// A fenced code block as laid out: its box (header strip included),
+/// language tag and text.
+#[derive(Clone)]
+pub(super) struct CodeBlock {
+    pub(super) rect: RECT,
+    pub(super) language: String,
+    pub(super) text: String,
 }
 
 enum Item {
@@ -226,8 +237,8 @@ struct Layout {
     items: Vec<Item>,
     links: Vec<(RECT, String)>,
     anchors: Vec<(String, i32)>,
-    // Each fenced code block's box and text (the chat's Copy buttons).
-    code_blocks: Vec<(RECT, String)>,
+    // Each fenced code block (the chat's Copy, Insert and Replace buttons).
+    code_blocks: Vec<CodeBlock>,
     height: i32,
     // Web images not shown because loading them hasn't been allowed.
     blocked: usize,
@@ -315,7 +326,10 @@ struct Layouter<'a> {
     items: Vec<Item>,
     links: Vec<(RECT, String)>,
     anchors: Vec<(String, i32)>,
-    code_blocks: Vec<(RECT, String)>,
+    code_blocks: Vec<CodeBlock>,
+    // Extra space at the top of each code block for a toolbar (the chat's);
+    // 0 in the preview.
+    code_header: i32,
 }
 
 impl Layouter<'_> {
@@ -699,6 +713,49 @@ impl Layouter<'_> {
         });
     }
 
+    // One line of a code block, as runs of text in their syntax colors
+    // (later spans win, as in the editor). Tabs show as four spaces.
+    fn code_line(
+        &mut self,
+        line: &str,
+        spans: &[lightline::syntax::Span],
+        x: i32,
+        y: i32,
+        clip_right: i32,
+    ) {
+        let mut colors: Vec<Option<Color>> = vec![None; line.len()];
+        for span in spans {
+            let end = span.end.min(line.len());
+            for slot in colors.iter_mut().take(end).skip(span.start) {
+                *slot = Some(span.color);
+            }
+        }
+        let mut offset = 0;
+        let mut start = 0;
+        while start < line.len() {
+            let color = colors[start];
+            let mut end = start + 1;
+            while end < line.len() && (colors[end] == color || !line.is_char_boundary(end)) {
+                end += 1;
+            }
+            let piece = line[start..end].replace('\t', "    ");
+            let width = self.measure(Font::Code, &piece);
+            self.items.push(Item::Text {
+                x: x + offset,
+                y,
+                width,
+                font: Font::Code,
+                tone: color.map_or(Tone::Text, Tone::Syntax),
+                text: piece.encode_utf16().collect(),
+                clip_right,
+                underline: false,
+                strike: false,
+            });
+            offset += width;
+            start = end;
+        }
+    }
+
     fn block(&mut self, block: &Block, first: bool, width: i32) {
         let left = self.s(24) * block.indent as i32 + self.s(18) * block.quote as i32;
         let inner = (width - left).max(self.s(60));
@@ -796,38 +853,33 @@ impl Layouter<'_> {
                 self.wrap(inlines, Font::Body, text_tone, left, inner, Align::Left);
                 self.y += self.s(3);
             }
-            BlockKind::Code { text, .. } => {
-                let tone = Tone::Text;
+            BlockKind::Code { language, text } => {
                 let pad = self.s(12);
+                let header = self.code_header;
                 let line_height = self.fonts.height(Font::Code) + self.s(3);
                 let lines: Vec<&str> = text.split('\n').collect();
-                let height = lines.len() as i32 * line_height + 2 * pad;
+                let height = header + lines.len() as i32 * line_height + 2 * pad;
                 let box_top = self.y;
                 self.fill(left, box_top, left + inner, box_top + height, Tone::CodeBg);
-                self.code_blocks.push((
-                    RECT {
+                self.code_blocks.push(CodeBlock {
+                    rect: RECT {
                         left,
                         top: box_top,
                         right: left + inner,
                         bottom: box_top + height,
                     },
-                    text.clone(),
-                ));
+                    language: language.clone(),
+                    text: text.clone(),
+                });
+                let colors = lightline::syntax::highlight_snippet(language, text);
                 for (index, line) in lines.iter().enumerate() {
-                    let line = line.replace('\t', "    ");
-                    let line_width = self.measure(Font::Code, &line);
-                    self.items.push(Item::Text {
-                        x: left + pad,
-                        y: box_top + pad + index as i32 * line_height,
-                        width: line_width,
-                        font: Font::Code,
-                        tone,
-                        text: line.encode_utf16().collect(),
-                        // Long lines are cut at the box edge, not wrapped.
-                        clip_right: left + inner - pad,
-                        underline: false,
-                        strike: false,
-                    });
+                    let spans = colors
+                        .as_ref()
+                        .and_then(|lines| lines.get(index))
+                        .map_or(&[][..], Vec::as_slice);
+                    let y = box_top + header + pad + index as i32 * line_height;
+                    // Long lines are cut at the box edge, not wrapped.
+                    self.code_line(line, spans, left + pad, y, left + inner - pad);
                 }
                 self.y = box_top + height + self.s(14);
             }
@@ -1176,6 +1228,7 @@ impl App {
             Tone::Edge => self.theme.edge,
             Tone::QuoteBar => self.theme.violet,
             Tone::TableHead => self.theme.line_bg,
+            Tone::Syntax(color) => self.theme.syntax(color),
         }
     }
 
@@ -1231,6 +1284,7 @@ impl App {
                 links: Vec::new(),
                 anchors: Vec::new(),
                 code_blocks: Vec::new(),
+                code_header: 0,
             };
             for (index, block) in blocks.iter().enumerate() {
                 layouter.block(block, index == 0, width);
@@ -1630,6 +1684,10 @@ impl App {
     }
 }
 
+/// Height of the strip at the top of a snippet's code blocks, in 96-dpi
+/// pixels.
+pub(super) const SNIPPET_CODE_HEADER: i32 = 30;
+
 /// Markdown that isn't a file -- an AI answer -- laid out once per width and
 /// painted anywhere. Images are described rather than loaded, and nothing
 /// is downloaded.
@@ -1704,6 +1762,8 @@ impl App {
                 links: Vec::new(),
                 anchors: Vec::new(),
                 code_blocks: Vec::new(),
+                // Room for the chat's toolbar (language, Insert, Copy...).
+                code_header: self.scale(SNIPPET_CODE_HEADER),
             };
             for (index, block) in state.blocks.iter().enumerate() {
                 layouter.block(block, index == 0, width);
@@ -1749,7 +1809,7 @@ impl App {
 impl MarkdownSnippet {
     /// The fenced code blocks of the last layout: each one's box (relative
     /// to the snippet's top-left corner) and text.
-    pub(super) fn code_blocks(&self) -> Vec<(RECT, String)> {
+    pub(super) fn code_blocks(&self) -> Vec<CodeBlock> {
         self.state
             .borrow()
             .layout
