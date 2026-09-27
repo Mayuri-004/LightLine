@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Web images load only when you allow it: a bar above the preview offers **Load images**, and the choice is remembered for that workspace (or set `"markdownLoadRemoteImages": true` to always allow). Downloads run in the background with a time and size limit and are cached in `%APPDATA%\LightLine\cache\images`, so each image is fetched once.
   - HTML in the file is never run: `<img>`, headings, text and line breaks are shown, and scripts, styles and embedded content are dropped.
   - The preview only reads the file and updates shortly after you stop typing; unsaved changes are never touched.
+- **Markdown Syntax Colors**: Markdown files are colored in the editor, as in VS Code: headings, **bold**, *italic*, `code` and fenced code blocks, link text and URLs, list, task and quote markers, tables and rules. The colors come from the active theme, so color themes such as Dracula restyle Markdown too.
+- **Word Wrap**: Long lines continue on the next screen row instead of running off the edge. It is on by default for Markdown, `"wordWrap": true` in `settings.json` turns it on for every file (the setting was previously ignored), and **Alt+Z** or **View: Toggle Word Wrap** switches it for the current file.
+  - Rows after the first keep the line's indent, so wrapped list items stay aligned; line numbers, breakpoints and folds stay on each line's first row.
+  - Up/Down and Page Up/Down move by screen row and keep the caret's horizontal position, and the mouse wheel scrolls by rows. Clicking, selecting, search results, error underlines and bracket matching all follow the wrapped rows.
+  - Only lines on screen are wrapped, so large files stay fast.
 
 #### Changed
 - **No Terminal at Startup**: LightLine no longer starts a PowerShell session on every launch. Startup is faster, the Welcome screen shows again, and the editor keeps keyboard focus. `` Ctrl+` `` starts the first terminal when you need it.

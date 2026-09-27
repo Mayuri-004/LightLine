@@ -91,6 +91,7 @@ impl App {
             ("Python: Install debugpy (for debugging)", 35),
             ("Markdown: Open Preview", 36),
             ("Markdown: Open Preview to the Side", 37),
+            ("View: Toggle Word Wrap (Alt+Z)", 38),
         ]
         .into_iter()
         .filter(|(name, _)| name.to_ascii_lowercase().contains(&query))
@@ -215,6 +216,7 @@ impl App {
                 Some(35) => self.install_debugpy(hwnd),
                 Some(36) => self.open_markdown_preview(hwnd, false),
                 Some(37) => self.open_markdown_preview(hwnd, true),
+                Some(38) => self.toggle_word_wrap(hwnd),
                 _ => {}
             }
         } else {

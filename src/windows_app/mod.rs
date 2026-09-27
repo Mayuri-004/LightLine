@@ -6,6 +6,7 @@ mod file_dialog;
 mod git;
 mod image_view;
 mod markdown_view;
+mod wrap;
 use markdown_view::{MARKDOWN_TIMER, MarkdownPreview};
 mod panels;
 mod session;

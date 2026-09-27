@@ -72,6 +72,7 @@ impl App {
                     cursor,
                     selection_anchor,
                     first_line,
+                    first_row: 0,
                 };
             }
         }

@@ -312,6 +312,7 @@ dependencies = [
  "tree-sitter",
  "tree-sitter-python",
  "tree-sitter-rust",
+ "unicode-width",
  "ureq",
  "vt100",
  "wait-timeout",

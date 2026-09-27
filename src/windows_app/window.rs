@@ -313,6 +313,8 @@ unsafe extern "system" fn wnd_proc(
             let shift = unsafe { GetKeyState(VK_SHIFT as i32) } < 0;
             let routed = key == VK_F10 as u32
                 || (shift && key == 0x46)
+                // Alt+Z: toggle word wrap, as in VS Code.
+                || (key == 0x5A && !shift && !app.terminal_focus)
                 || (app.terminal_focus
                     && key != VK_F4 as u32
                     && key != VK_SPACE as u32
@@ -479,11 +481,11 @@ unsafe extern "system" fn wnd_proc(
                 app.scroll_markdown(hwnd, pixels);
                 return 0;
             }
-            // Scroll by visible lines, so a folded block counts as one row.
+            // Scroll by screen rows: a wrapped line has several, a folded
+            // block one.
             if delta != 0 {
                 let rows = if delta > 0 { -3 } else { 3 };
-                app.view_mut().first_line =
-                    app.doc().step_visible_lines(app.view().first_line, rows);
+                app.scroll_rows(hwnd, rows);
             }
             app.update_scrollbar(hwnd);
             unsafe {
@@ -494,17 +496,12 @@ unsafe extern "system" fn wnd_proc(
         WM_VSCROLL => {
             let code = (wparam & 0xffff) as i32;
             let max = app.doc().line_count().saturating_sub(1);
-            app.view_mut().first_line = match code {
-                SB_LINEUP => app.doc().step_visible_lines(app.view().first_line, -1),
-                SB_LINEDOWN => app.doc().step_visible_lines(app.view().first_line, 1),
-                SB_PAGEUP => {
-                    let page = app.visible_lines(hwnd) as isize;
-                    app.doc().step_visible_lines(app.view().first_line, -page)
-                }
-                SB_PAGEDOWN => {
-                    let page = app.visible_lines(hwnd) as isize;
-                    app.doc().step_visible_lines(app.view().first_line, page)
-                }
+            let page = app.visible_lines(hwnd) as isize;
+            match code {
+                SB_LINEUP => app.scroll_rows(hwnd, -1),
+                SB_LINEDOWN => app.scroll_rows(hwnd, 1),
+                SB_PAGEUP => app.scroll_rows(hwnd, -page),
+                SB_PAGEDOWN => app.scroll_rows(hwnd, page),
                 SB_THUMBPOSITION | SB_THUMBTRACK => {
                     let mut info = SCROLLINFO {
                         cbSize: size_of::<SCROLLINFO>() as u32,
@@ -514,13 +511,16 @@ unsafe extern "system" fn wnd_proc(
                     unsafe {
                         GetScrollInfo(hwnd, SB_VERT, &mut info);
                     }
-                    // The track position is a screen row (see update_scrollbar).
-                    app.doc()
+                    // The scrollbar counts document lines (visible ones, see
+                    // update_scrollbar), so a drag lands on a line's first row.
+                    let line = app
+                        .doc()
                         .line_at_visual_index(info.nTrackPos.max(0) as usize)
-                        .min(max)
+                        .min(max);
+                    app.set_view_top((line, 0));
                 }
-                _ => app.view().first_line,
-            };
+                _ => {}
+            }
             app.update_scrollbar(hwnd);
             unsafe {
                 InvalidateRect(hwnd, null(), 0);

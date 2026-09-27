@@ -90,6 +90,8 @@ pub(super) struct EditorView {
     pub(super) cursor: Pos,
     pub(super) selection_anchor: Option<Pos>,
     pub(super) first_line: usize,
+    // With word wrap, which of first_line's screen rows is at the top.
+    pub(super) first_row: usize,
 }
 
 fn remap_position(pos: Pos, start: Pos, end: Pos, inserted_end: Pos) -> Pos {
@@ -255,6 +257,8 @@ pub(super) struct Tab {
     // Some for a rendered, read-only preview of a Markdown file; `document`
     // is then an empty placeholder with no path.
     pub(super) markdown: Option<MarkdownPreview>,
+    // Word wrap chosen for this tab with Alt+Z; None follows the setting.
+    pub(super) word_wrap: Option<bool>,
 }
 
 #[derive(Clone)]
@@ -309,6 +313,8 @@ impl Tab {
             Some(Syntax::new_rust())
         } else if Self::is_python(&document) {
             Some(Syntax::new_python())
+        } else if Self::is_markdown(&document) {
+            Some(Syntax::new_markdown())
         } else {
             None
         };
@@ -325,6 +331,7 @@ impl Tab {
             binary_preview: false,
             placeholder: false,
             markdown: None,
+            word_wrap: None,
         }
     }
 
@@ -385,6 +392,7 @@ impl Tab {
             binary_preview: true,
             placeholder: false,
             markdown: None,
+            word_wrap: None,
         }
     }
 
@@ -400,6 +408,13 @@ impl Tab {
             .as_deref()
             .and_then(Path::extension)
             .is_some_and(|ext| ext.eq_ignore_ascii_case("rs"))
+    }
+
+    pub(super) fn is_markdown(document: &Document) -> bool {
+        document
+            .path
+            .as_deref()
+            .is_some_and(lightline::markdown::is_markdown_path)
     }
 
     pub(super) fn is_python(document: &Document) -> bool {
@@ -443,6 +458,10 @@ impl Tab {
         } else if Self::is_python(&self.document) {
             if !matches!(self.syntax, Some(Syntax::Python(_))) {
                 self.syntax = Some(Syntax::new_python());
+            }
+        } else if Self::is_markdown(&self.document) {
+            if !matches!(self.syntax, Some(Syntax::Markdown(_))) {
+                self.syntax = Some(Syntax::new_markdown());
             }
         } else {
             self.syntax = None;
@@ -557,6 +576,8 @@ pub(super) struct App {
     pub(super) terminal_profile_defaults_open: bool,
     pub(super) terminal_profile_availability: Vec<(ShellKind, bool)>,
     pub(super) cell_width: i32,
+    // Width of one character of the editor font, for word wrap columns.
+    pub(super) char_width: i32,
     pub(super) changes: Vec<Change>,
     pub(super) review_loading: bool,
     pub(super) review_file: Option<PathBuf>,
@@ -832,6 +853,26 @@ impl App {
     // guess — keeps the editor and terminal's cell grid consistent with
     // whichever font actually got selected (Cascadia Mono or the Consolas
     // fallback have different metrics).
+    // Average width of a character in the (monospaced) editor font.
+    fn measured_char_width(font: HFONT, dpi: u32, zoom: i32) -> i32 {
+        unsafe {
+            let hdc = GetDC(null_mut());
+            if hdc.is_null() {
+                return scaled(8, dpi, zoom);
+            }
+            let old = SelectObject(hdc, font);
+            let sample: Vec<u16> = "abcdefghijklmnopqrstuvwxyz".encode_utf16().collect();
+            let mut size = SIZE::default();
+            let ok = GetTextExtentPoint32W(hdc, sample.as_ptr(), sample.len() as i32, &mut size);
+            SelectObject(hdc, old);
+            ReleaseDC(null_mut(), hdc);
+            if ok == 0 {
+                return scaled(8, dpi, zoom);
+            }
+            (size.cx / sample.len() as i32).max(1)
+        }
+    }
+
     fn measured_line_height(font: HFONT, dpi: u32, zoom: i32) -> i32 {
         unsafe {
             let hdc = GetDC(null_mut());
@@ -931,6 +972,7 @@ impl App {
         let zoom = 100;
         let font = Self::font_for_dpi(dpi, zoom);
         let line_height = Self::measured_line_height(font, dpi, zoom);
+        let char_width = Self::measured_char_width(font, dpi, zoom);
         let (worker_tx, worker_rx) = mpsc::channel();
         let (lsp_tx, lsp_rx) = mpsc::channel();
         let (debug_tx, debug_rx) = mpsc::channel();
@@ -1022,6 +1064,7 @@ impl App {
             terminal_profile_defaults_open: false,
             terminal_profile_availability: Vec::new(),
             cell_width: 0,
+            char_width,
             changes: Vec::new(),
             review_loading: false,
             review_file: None,
@@ -1895,6 +1938,7 @@ impl App {
             DeleteObject(self.hero_font);
         }
         self.line_height = Self::measured_line_height(font, dpi, zoom);
+        self.char_width = Self::measured_char_width(font, dpi, zoom);
         self.font = font;
         self.ui_font = ui_font;
         self.brand_font = brand_font;
@@ -2019,14 +2063,20 @@ impl App {
         if let Some(anchor) = anchor {
             doc.unfold_to_reveal(anchor.line);
         }
-        let first = self.doc().visible_line_for(self.view().first_line);
-        self.view_mut().first_line = first;
-        if line < first {
-            self.view_mut().first_line = line;
-        } else if self.doc().visual_row_of(first, line, visible - 1).is_none() {
-            // Scroll so the caret is on the last row: `visible - 1` visible
-            // lines above it, skipping folded ones.
-            self.view_mut().first_line = self.doc().step_visible_lines(line, 1 - visible as isize);
+        // Screen rows, not lines: with word wrap one line can take several,
+        // and folded lines take none.
+        let pane = self.focused_pane;
+        let top = self.view_top(hwnd, pane);
+        let cursor = self.doc().clamp(self.view().cursor);
+        let caret = (line, self.line_rows(hwnd, pane, line).row_of(cursor.byte));
+        if caret < top {
+            self.set_view_top(caret);
+        } else if self.locate(hwnd, pane, cursor, visible - 1).is_none() {
+            // Scroll so the caret is on the last row.
+            let top = self.step_rows(hwnd, pane, caret, 1 - visible as isize);
+            self.set_view_top(top);
+        } else {
+            self.set_view_top(top);
         }
         self.update_scrollbar(hwnd);
         self.caret_on = true;

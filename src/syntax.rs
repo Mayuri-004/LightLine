@@ -41,6 +41,7 @@ pub struct Span {
 pub enum Syntax {
     Rust(RustSyntax),
     Python(PythonSyntax),
+    Markdown(crate::markdown_syntax::MarkdownSyntax),
 }
 
 impl Syntax {
@@ -52,10 +53,15 @@ impl Syntax {
         Syntax::Python(PythonSyntax::new())
     }
 
+    pub fn new_markdown() -> Self {
+        Syntax::Markdown(crate::markdown_syntax::MarkdownSyntax::new())
+    }
+
     pub fn invalidate_from(&mut self, line: usize) {
         match self {
             Syntax::Rust(syntax) => syntax.invalidate_from(line),
             Syntax::Python(syntax) => syntax.invalidate_from(),
+            Syntax::Markdown(syntax) => syntax.invalidate_from(line),
         }
     }
 
@@ -66,6 +72,8 @@ impl Syntax {
         match self {
             Syntax::Rust(syntax) => syntax.edited(change),
             Syntax::Python(syntax) => syntax.edited(change),
+            // Colored line by line: only the fence state from here on changes.
+            Syntax::Markdown(syntax) => syntax.invalidate_from(change.start.line),
         }
     }
 
@@ -73,6 +81,7 @@ impl Syntax {
         match self {
             Syntax::Rust(syntax) => syntax.advance_to(document, target, budget),
             Syntax::Python(syntax) => syntax.advance_to(document),
+            Syntax::Markdown(syntax) => syntax.advance_to(document, target, budget),
         }
     }
 
@@ -80,6 +89,7 @@ impl Syntax {
         match self {
             Syntax::Rust(syntax) => syntax.spans(document, line),
             Syntax::Python(syntax) => syntax.spans(line),
+            Syntax::Markdown(syntax) => syntax.spans(document, line),
         }
     }
 }

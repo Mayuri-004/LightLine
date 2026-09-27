@@ -125,246 +125,275 @@ impl App {
                 None
             };
             let paused_bg = blend(self.theme.editor_bg, rgb(255, 204, 0), 0.14);
-            for row in 0..visible {
-                let Some(index) = doc.visual_row_to_doc_line(view.first_line, row) else {
-                    break;
+            // Screen rows from the top of the view. With word wrap a line
+            // takes several: its gutter (number, breakpoint, fold) goes on
+            // the first, and its text continues on the rest.
+            let columns = self.wrap_columns(hwnd, pane);
+            let (mut index, mut first_row) = self.view_top(hwnd, pane);
+            let mut screen_row = 0usize;
+            'lines: while screen_row < visible {
+                let source = doc.line(index);
+                let rows = super::super::wrap::layout_line(source, columns, self.settings.tab_size);
+                let spans = match &tab.syntax {
+                    Some(syntax) if source.len() <= 16_384 => syntax.spans(doc, index),
+                    _ => Vec::new(),
                 };
-                if index >= doc.line_count() {
-                    break;
-                }
-                let y = self.editor_top() + row as i32 * self.line_height;
-                if y >= bottom {
-                    break;
-                }
+                // The selected byte range of this line, and whether the
+                // selection carries on past its end.
+                let line_selection = selection
+                    .filter(|(start, end)| {
+                        index >= start.line
+                            && index <= end.line
+                            && !(index == end.line && end.byte == 0)
+                    })
+                    .map(|(start, end)| {
+                        (
+                            if index == start.line { start.byte } else { 0 },
+                            if index == end.line {
+                                end.byte
+                            } else {
+                                source.len()
+                            },
+                            index < end.line,
+                        )
+                    });
                 let paused_here = paused_line == Some(index);
-                if paused_here || index == view.cursor.line {
-                    let line_bg = if paused_here {
-                        paused_bg
-                    } else {
-                        self.theme.line_bg
+                for row in first_row..rows.count() {
+                    let y = self.editor_top() + screen_row as i32 * self.line_height;
+                    if screen_row >= visible || y >= bottom {
+                        break 'lines;
+                    }
+                    screen_row += 1;
+                    let row_start = rows.start(row);
+                    let row_end = rows.end(row, source.len());
+                    let last_row = rows.is_last(row);
+                    let text_left = code_left + rows.indent(row, self.char_width);
+                    // Where `byte` of this row is drawn.
+                    let x_of = |byte: usize| {
+                        text_left + self.text_width(hdc, safe_slice_range(source, row_start, byte))
                     };
-                    Self::fill(
-                        hdc,
-                        RECT {
+                    let row_bottom = (y + self.line_height).min(bottom);
+                    if paused_here || index == view.cursor.line {
+                        let line_bg = if paused_here {
+                            paused_bg
+                        } else {
+                            self.theme.line_bg
+                        };
+                        Self::fill(
+                            hdc,
+                            RECT {
+                                left,
+                                top: y,
+                                right,
+                                bottom: row_bottom,
+                            },
+                            line_bg,
+                        );
+                    }
+                    if row == 0 {
+                        let number = format!("{}", index + 1);
+                        let num: Vec<u16> = number.encode_utf16().collect();
+                        SetTextColor(
+                            hdc,
+                            if index == view.cursor.line {
+                                self.theme.line_number_active
+                            } else {
+                                self.theme.line_number
+                            },
+                        );
+                        // Right-aligned against the fold column, leaving the
+                        // left of the gutter free for the breakpoint marker.
+                        let number_right = left + self.scale(GUTTER) - self.scale(18);
+                        let number_clip = RECT {
                             left,
                             top: y,
-                            right,
-                            bottom: (y + self.line_height).min(bottom),
-                        },
-                        line_bg,
-                    );
-                }
-                let number = format!("{}", index + 1);
-                let num: Vec<u16> = number.encode_utf16().collect();
-                SetTextColor(
-                    hdc,
-                    if index == view.cursor.line {
-                        self.theme.line_number_active
-                    } else {
-                        self.theme.line_number
-                    },
-                );
-                // Right-aligned against the fold column, leaving the left of
-                // the gutter free for the breakpoint marker.
-                let number_right = left + self.scale(GUTTER) - self.scale(18);
-                let number_clip = RECT {
-                    left,
-                    top: y,
-                    right: number_right,
-                    bottom,
-                };
-                ExtTextOutW(
-                    hdc,
-                    number_right - self.text_width(hdc, &number),
-                    y,
-                    ETO_CLIPPED,
-                    &number_clip,
-                    num.as_ptr(),
-                    num.len() as u32,
-                    null(),
-                );
-                // Breakpoint dot; on the paused line a yellow arrow instead,
-                // carrying a small dot when that line also has a breakpoint.
-                let marker_x = left + self.scale(10);
-                let marker_y = y + self.line_height / 2;
-                let red = rgb(232, 72, 76);
-                let marker = |glyph: DebugGlyph, color: u32, size: i32, shift: i32| {
-                    let (x, y) = (marker_x + shift - size / 2, marker_y - size / 2);
-                    self.icons.draw_glyph(hdc, glyph, color, x, y, size);
-                };
-                if paused_here {
-                    let yellow = rgb(255, 204, 0);
-                    marker(DebugGlyph::ExecutionArrow, yellow, self.scale(18), 0);
-                    if doc.has_breakpoint(index) {
-                        marker(DebugGlyph::Breakpoint, red, self.scale(9), -self.scale(1));
-                    }
-                } else if doc.has_breakpoint(index) {
-                    marker(DebugGlyph::Breakpoint, red, self.scale(14), 0);
-                }
-                // Code folding chevron in gutter column
-                let is_folded = doc.is_folded_start(index).is_some();
-                let is_foldable = is_folded || doc.foldable_range(index).is_some();
-                if is_foldable {
-                    // Drawn as vector strokes, like the Explorer's chevrons:
-                    // the editor font may have no glyph for ⌄ or ›, which
-                    // rendered as an empty box.
-                    self.chevron(
-                        hdc,
-                        left + self.scale(GUTTER) - self.scale(10),
-                        y + self.line_height / 2,
-                        !is_folded,
-                    );
-                }
-                if let Some(diff) = git_diff {
-                    let gutter_edge = left + self.scale(GUTTER) - self.scale(3);
-                    if diff.added.contains(&index) {
-                        FillRect(
+                            right: number_right,
+                            bottom,
+                        };
+                        ExtTextOutW(
                             hdc,
-                            &RECT {
-                                left: gutter_edge,
-                                top: y,
-                                right: gutter_edge + self.scale(3),
-                                bottom: (y + self.line_height).min(bottom),
-                            },
-                            git_added_brush,
+                            number_right - self.text_width(hdc, &number),
+                            y,
+                            ETO_CLIPPED,
+                            &number_clip,
+                            num.as_ptr(),
+                            num.len() as u32,
+                            null(),
                         );
-                    } else if diff.modified.contains(&index) {
-                        FillRect(
-                            hdc,
-                            &RECT {
-                                left: gutter_edge,
-                                top: y,
-                                right: gutter_edge + self.scale(3),
-                                bottom: (y + self.line_height).min(bottom),
-                            },
-                            git_mod_brush,
-                        );
+                        // Breakpoint dot; on the paused line a yellow arrow
+                        // instead, carrying a small dot when that line also
+                        // has a breakpoint.
+                        let marker_x = left + self.scale(10);
+                        let marker_y = y + self.line_height / 2;
+                        let red = rgb(232, 72, 76);
+                        let marker = |glyph: DebugGlyph, color: u32, size: i32, shift: i32| {
+                            let (x, y) = (marker_x + shift - size / 2, marker_y - size / 2);
+                            self.icons.draw_glyph(hdc, glyph, color, x, y, size);
+                        };
+                        if paused_here {
+                            let yellow = rgb(255, 204, 0);
+                            marker(DebugGlyph::ExecutionArrow, yellow, self.scale(18), 0);
+                            if doc.has_breakpoint(index) {
+                                marker(DebugGlyph::Breakpoint, red, self.scale(9), -self.scale(1));
+                            }
+                        } else if doc.has_breakpoint(index) {
+                            marker(DebugGlyph::Breakpoint, red, self.scale(14), 0);
+                        }
+                        // Code folding chevron in gutter column
+                        let is_folded = doc.is_folded_start(index).is_some();
+                        let is_foldable = is_folded || doc.foldable_range(index).is_some();
+                        if is_foldable {
+                            // Drawn as vector strokes, like the Explorer's
+                            // chevrons: the editor font may have no glyph for
+                            // ⌄ or ›, which rendered as an empty box.
+                            self.chevron(
+                                hdc,
+                                left + self.scale(GUTTER) - self.scale(10),
+                                y + self.line_height / 2,
+                                !is_folded,
+                            );
+                        }
+                        let indent_columns = source
+                            .chars()
+                            .take_while(|ch| *ch == ' ' || *ch == '\t')
+                            .take(64)
+                            .map(|ch| if ch == '\t' { 4 } else { 1 })
+                            .sum::<usize>();
+                        for level in 1..=(indent_columns / 4).min(8) {
+                            let guide_x =
+                                code_left + level as i32 * 4 * space_width - self.scale(4);
+                            if guide_x < right {
+                                FillRect(
+                                    hdc,
+                                    &RECT {
+                                        left: guide_x,
+                                        top: y,
+                                        right: guide_x + 1,
+                                        bottom: row_bottom,
+                                    },
+                                    guide_brush,
+                                );
+                            }
+                        }
                     }
-                    if diff.deleted.contains(&index) {
-                        let pts = [
-                            POINT { x: gutter_edge, y },
-                            POINT {
-                                x: gutter_edge + self.scale(3),
-                                y: y + self.scale(3),
-                            },
-                            POINT {
-                                x: gutter_edge,
-                                y: y + self.scale(6),
-                            },
-                        ];
-                        let old_brush = SelectObject(hdc, git_del_brush);
-                        let old_pen = SelectObject(hdc, GetStockObject(NULL_PEN));
-                        Polygon(hdc, pts.as_ptr(), 3);
-                        SelectObject(hdc, old_pen);
-                        SelectObject(hdc, old_brush);
+                    if let Some(diff) = git_diff {
+                        let gutter_edge = left + self.scale(GUTTER) - self.scale(3);
+                        let bar = if diff.added.contains(&index) {
+                            Some(git_added_brush)
+                        } else if diff.modified.contains(&index) {
+                            Some(git_mod_brush)
+                        } else {
+                            None
+                        };
+                        // The bar runs down every row of a wrapped line.
+                        if let Some(brush) = bar {
+                            FillRect(
+                                hdc,
+                                &RECT {
+                                    left: gutter_edge,
+                                    top: y,
+                                    right: gutter_edge + self.scale(3),
+                                    bottom: row_bottom,
+                                },
+                                brush,
+                            );
+                        }
+                        if row == 0 && diff.deleted.contains(&index) {
+                            let pts = [
+                                POINT { x: gutter_edge, y },
+                                POINT {
+                                    x: gutter_edge + self.scale(3),
+                                    y: y + self.scale(3),
+                                },
+                                POINT {
+                                    x: gutter_edge,
+                                    y: y + self.scale(6),
+                                },
+                            ];
+                            let old_brush = SelectObject(hdc, git_del_brush);
+                            let old_pen = SelectObject(hdc, GetStockObject(NULL_PEN));
+                            Polygon(hdc, pts.as_ptr(), 3);
+                            SelectObject(hdc, old_pen);
+                            SelectObject(hdc, old_brush);
+                        }
                     }
-                }
-                let source = doc.line(index);
-                let indent_columns = source
-                    .chars()
-                    .take_while(|ch| *ch == ' ' || *ch == '\t')
-                    .take(64)
-                    .map(|ch| if ch == '\t' { 4 } else { 1 })
-                    .sum::<usize>();
-                for level in 1..=(indent_columns / 4).min(8) {
-                    let guide_x = code_left + level as i32 * 4 * space_width - self.scale(4);
-                    if guide_x < right {
-                        FillRect(
-                            hdc,
-                            &RECT {
-                                left: guide_x,
-                                top: y,
-                                right: guide_x + 1,
-                                bottom: (y + self.line_height).min(bottom),
-                            },
-                            guide_brush,
-                        );
+                    if let Some((from, to, continues)) = line_selection {
+                        let from = from.max(row_start);
+                        let to = to.min(row_end);
+                        let past_end = continues && last_row;
+                        if from < to || (past_end && from <= to) {
+                            let x1 = x_of(from);
+                            let x2 = x_of(to) + if past_end { self.scale(8) } else { 0 };
+                            if x2 > x1 && x1 < right {
+                                FillRect(
+                                    hdc,
+                                    &RECT {
+                                        left: x1,
+                                        top: y,
+                                        right: x2.min(right),
+                                        bottom: row_bottom,
+                                    },
+                                    selection_bg,
+                                );
+                            }
+                        }
                     }
-                }
-                if let Some((start, end)) = selection
-                    && index >= start.line
-                    && index <= end.line
-                    && !(index == end.line && end.byte == 0)
-                {
-                    let from = if index == start.line { start.byte } else { 0 };
-                    let to = if index == end.line {
-                        end.byte
-                    } else {
-                        source.len()
+                    let row_text = safe_slice_range(source, row_start, row_end)
+                        .replace('\t', &" ".repeat(self.settings.tab_size));
+                    let chars: Vec<u16> = row_text.encode_utf16().collect();
+                    SetTextColor(hdc, self.theme.text);
+                    let clip = RECT {
+                        left: code_left,
+                        top: y,
+                        right,
+                        bottom,
                     };
-                    let from_str = safe_slice_prefix(source, from);
-                    let to_str = safe_slice_prefix(source, to);
-                    let x1 = code_left + self.text_width(hdc, from_str);
-                    let x2 = code_left
-                        + self.text_width(hdc, to_str)
-                        + if index < end.line { self.scale(8) } else { 0 };
-                    if x2 > x1 && x1 < right {
-                        FillRect(
-                            hdc,
-                            &RECT {
-                                left: x1,
-                                top: y,
-                                right: x2.min(right),
-                                bottom: (y + self.line_height).min(bottom),
-                            },
-                            selection_bg,
-                        );
-                    }
-                }
-                let line = source.replace('\t', &" ".repeat(self.settings.tab_size));
-                let chars: Vec<u16> = line.encode_utf16().collect();
-                SetTextColor(hdc, self.theme.text);
-                let clip = RECT {
-                    left: code_left,
-                    top: y,
-                    right,
-                    bottom,
-                };
-                ExtTextOutW(
-                    hdc,
-                    code_left,
-                    y,
-                    ETO_CLIPPED,
-                    &clip,
-                    chars.as_ptr(),
-                    chars.len() as u32,
-                    null(),
-                );
-                if doc.is_folded_start(index).is_some() {
-                    let text_w = self.text_width(hdc, &line);
-                    let pill_x = code_left + text_w + self.scale(6);
-                    let pill_w = self.scale(22);
-                    let pill_h = self.scale(13);
-                    let pill_y = y + (self.line_height - pill_h) / 2;
-                    let pill_bg = CreateSolidBrush(self.theme.active_bg);
-                    FillRect(
-                        hdc,
-                        &RECT {
-                            left: pill_x,
-                            top: pill_y,
-                            right: pill_x + pill_w,
-                            bottom: pill_y + pill_h,
-                        },
-                        pill_bg,
-                    );
-                    DeleteObject(pill_bg);
-                    SetTextColor(hdc, self.theme.line_number_active);
-                    let dots: Vec<u16> = "...".encode_utf16().collect();
                     ExtTextOutW(
                         hdc,
-                        pill_x + self.scale(3),
-                        pill_y - self.scale(1),
-                        0,
-                        null(),
-                        dots.as_ptr(),
-                        dots.len() as u32,
+                        text_left,
+                        y,
+                        ETO_CLIPPED,
+                        &clip,
+                        chars.as_ptr(),
+                        chars.len() as u32,
                         null(),
                     );
-                }
-                if source.len() <= 16_384
-                    && let Some(syntax) = &tab.syntax
-                {
-                    for span in syntax.spans(doc, index) {
+                    if last_row && doc.is_folded_start(index).is_some() {
+                        let pill_x = x_of(row_end) + self.scale(6);
+                        let pill_w = self.scale(22);
+                        let pill_h = self.scale(13);
+                        let pill_y = y + (self.line_height - pill_h) / 2;
+                        let pill_bg = CreateSolidBrush(self.theme.active_bg);
+                        FillRect(
+                            hdc,
+                            &RECT {
+                                left: pill_x,
+                                top: pill_y,
+                                right: pill_x + pill_w,
+                                bottom: pill_y + pill_h,
+                            },
+                            pill_bg,
+                        );
+                        DeleteObject(pill_bg);
+                        SetTextColor(hdc, self.theme.line_number_active);
+                        let dots: Vec<u16> = "...".encode_utf16().collect();
+                        ExtTextOutW(
+                            hdc,
+                            pill_x + self.scale(3),
+                            pill_y - self.scale(1),
+                            0,
+                            null(),
+                            dots.as_ptr(),
+                            dots.len() as u32,
+                            null(),
+                        );
+                    }
+                    for span in &spans {
+                        // The part of the span on this row.
+                        let (from, to) = (span.start.max(row_start), span.end.min(row_end));
+                        if from >= to {
+                            continue;
+                        }
                         // self.theme is the single resolved source for these
                         // -- Theme::with_overrides already folded in any
                         // settings.json "colors" override once, at startup,
@@ -382,14 +411,12 @@ impl App {
                             Color::Attribute => self.theme.attribute,
                         };
                         SetTextColor(hdc, color);
-                        let left =
-                            code_left + self.text_width(hdc, safe_slice_prefix(source, span.start));
-                        let text = safe_slice_range(source, span.start, span.end)
+                        let text = safe_slice_range(source, from, to)
                             .replace('\t', &" ".repeat(self.settings.tab_size));
                         let chars: Vec<u16> = text.encode_utf16().collect();
                         ExtTextOutW(
                             hdc,
-                            left,
+                            x_of(from),
                             y,
                             ETO_CLIPPED,
                             &clip,
@@ -398,51 +425,69 @@ impl App {
                             null(),
                         );
                     }
-                }
-                for diagnostic in tab
-                    .diagnostics
-                    .iter()
-                    .filter(|item| item.range.start.line as usize == index)
-                    .take(3)
-                {
-                    let color = if diagnostic.severity == 1 {
-                        self.theme.error
-                    } else {
-                        self.theme.warning
-                    };
-                    let start_byte = lsp::utf16_to_byte(source, diagnostic.range.start.character);
-                    let end_byte = if diagnostic.range.end.line as usize == index {
-                        lsp::utf16_to_byte(source, diagnostic.range.end.character)
-                    } else {
-                        source.len()
-                    };
-                    let x1 =
-                        code_left + self.text_width(hdc, safe_slice_prefix(source, start_byte));
-                    let x2 = code_left
-                        + self.text_width(hdc, safe_slice_prefix(source, end_byte.max(start_byte)));
-                    Self::fill(
-                        hdc,
-                        RECT {
-                            left: left + self.scale(48),
-                            top: y + self.line_height / 2 - self.scale(3),
-                            right: left + self.scale(54),
-                            bottom: y + self.line_height / 2 + self.scale(3),
-                        },
-                        color,
-                    );
-                    if x1 < right {
-                        Self::fill(
-                            hdc,
-                            RECT {
-                                left: x1,
-                                top: (y + self.line_height - self.scale(2)).min(bottom),
-                                right: x2.max(x1 + self.scale(6)).min(right),
-                                bottom: (y + self.line_height).min(bottom),
-                            },
-                            color,
-                        );
+                    for diagnostic in tab
+                        .diagnostics
+                        .iter()
+                        .filter(|item| item.range.start.line as usize == index)
+                        .take(3)
+                    {
+                        let color = if diagnostic.severity == 1 {
+                            self.theme.error
+                        } else {
+                            self.theme.warning
+                        };
+                        let start_byte =
+                            lsp::utf16_to_byte(source, diagnostic.range.start.character);
+                        let end_byte = if diagnostic.range.end.line as usize == index {
+                            lsp::utf16_to_byte(source, diagnostic.range.end.character)
+                        } else {
+                            source.len()
+                        }
+                        .max(start_byte);
+                        if row == 0 {
+                            Self::fill(
+                                hdc,
+                                RECT {
+                                    left: left + self.scale(48),
+                                    top: y + self.line_height / 2 - self.scale(3),
+                                    right: left + self.scale(54),
+                                    bottom: y + self.line_height / 2 + self.scale(3),
+                                },
+                                color,
+                            );
+                        }
+                        // Underlined on each row the problem reaches; an
+                        // empty range gets a short mark on its own row.
+                        let on_row = if end_byte > start_byte {
+                            start_byte < row_end && end_byte > row_start
+                        } else {
+                            rows.row_of(start_byte) == row
+                        };
+                        if !on_row {
+                            continue;
+                        }
+                        let x1 = x_of(start_byte.max(row_start));
+                        let x2 = x_of(end_byte.min(row_end));
+                        if x1 < right {
+                            Self::fill(
+                                hdc,
+                                RECT {
+                                    left: x1,
+                                    top: (y + self.line_height - self.scale(2)).min(bottom),
+                                    right: x2.max(x1 + self.scale(6)).min(right),
+                                    bottom: row_bottom,
+                                },
+                                color,
+                            );
+                        }
                     }
                 }
+                let next = doc.next_visible_line(index);
+                if next == index {
+                    break;
+                }
+                index = next;
+                first_row = 0;
             }
             DeleteObject(guide_brush);
             DeleteObject(git_added_brush);
@@ -552,7 +597,11 @@ impl App {
                         if doc.is_line_hidden(line_idx) {
                             return;
                         }
-                        let Some(row) = doc.visual_row_of(view.first_line, line_idx, visible)
+                        let at = Pos {
+                            line: line_idx,
+                            byte: b,
+                        };
+                        let Some((row, row_start, indent)) = self.locate(hwnd, pane, at, visible)
                         else {
                             return;
                         };
@@ -561,7 +610,9 @@ impl App {
                             return;
                         }
                         let text = doc.line(line_idx);
-                        let x = code_left + self.text_width(hdc, safe_slice_prefix(text, b));
+                        let x = code_left
+                            + indent
+                            + self.text_width(hdc, safe_slice_range(text, row_start, b));
                         let rest = if b < text.len() && text.is_char_boundary(b) {
                             &text[b..]
                         } else {
@@ -607,16 +658,22 @@ impl App {
                 && !self.panel_focus
                 && pane == self.focused_pane
             {
-                let line = doc.line(view.cursor.line);
-                let x = code_left + self.text_width(hdc, safe_slice_prefix(line, view.cursor.byte));
-                // Visual row, not document line: folded blocks above the
-                // caret take one row each.
-                let row = (!doc.is_line_hidden(view.cursor.line))
-                    .then(|| doc.visual_row_of(view.first_line, view.cursor.line, visible))
+                // Its screen row, not its document line: rows above it can be
+                // wrapped (several per line) or folded (one per block).
+                let cursor = doc.clamp(view.cursor);
+                let line = doc.line(cursor.line);
+                let located = (!doc.is_line_hidden(cursor.line))
+                    .then(|| self.locate(hwnd, pane, cursor, visible))
                     .flatten();
-                let y = row.map_or(bottom, |row| {
-                    self.editor_top() + row as i32 * self.line_height
-                });
+                let (x, y) = match located {
+                    Some((row, row_start, indent)) => (
+                        code_left
+                            + indent
+                            + self.text_width(hdc, safe_slice_range(line, row_start, cursor.byte)),
+                        self.editor_top() + row as i32 * self.line_height,
+                    ),
+                    None => (right, bottom),
+                };
                 if y < bottom && x < right {
                     let caret = CreateSolidBrush(self.theme.cursor);
                     FillRect(

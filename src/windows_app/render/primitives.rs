@@ -157,22 +157,24 @@ impl App {
 
     pub(in crate::windows_app) fn caret_rect(&self, hwnd: HWND) -> RECT {
         unsafe {
+            let cursor = self.doc().clamp(self.view().cursor);
+            let located = self.locate(
+                hwnd,
+                self.focused_pane,
+                cursor,
+                self.visible_lines(hwnd) + 1,
+            );
+            // Measured from the start of the caret's screen row.
+            let (row, row_start, indent) = located.map_or((-1, 0, 0), |(row, start, indent)| {
+                (row as i32, start, indent)
+            });
             let hdc = GetDC(hwnd);
             let old = SelectObject(hdc, self.font);
-            let line = self.doc().line(self.view().cursor.line);
-            let cursor_prefix = safe_slice_prefix(line, self.view().cursor.byte);
-            let x = self.code_left(hwnd) + self.text_width(hdc, cursor_prefix);
+            let line = self.doc().line(cursor.line);
+            let prefix = safe_slice_range(line, row_start, cursor.byte);
+            let x = self.code_left(hwnd) + indent + self.text_width(hdc, prefix);
             SelectObject(hdc, old);
             ReleaseDC(hwnd, hdc);
-            let doc = self.doc();
-            let cursor_line = self.view().cursor.line;
-            let row = doc
-                .visual_row_of(
-                    self.view().first_line,
-                    cursor_line,
-                    self.visible_lines(hwnd) + 1,
-                )
-                .map_or(-1, |row| row as i32);
             let y = self.editor_top() + row * self.line_height;
             RECT {
                 left: x,

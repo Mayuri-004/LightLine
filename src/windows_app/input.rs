@@ -33,6 +33,11 @@ impl App {
         self.clear_hover(hwnd);
         let ctrl = unsafe { GetKeyState(VK_CONTROL as i32) } < 0;
         let shift = unsafe { GetKeyState(VK_SHIFT as i32) } < 0;
+        let alt = unsafe { GetKeyState(VK_MENU as i32) } < 0;
+        if alt && key == 0x5A && !ctrl && !shift && !self.terminal_focus && !self.welcome {
+            self.toggle_word_wrap(hwnd);
+            return true;
+        }
         if self.terminal_profile_menu_open && key == VK_ESCAPE as u32 && !ctrl && !shift {
             self.terminal_profile_menu_open = false;
             self.terminal_profile_defaults_open = false;
@@ -754,45 +759,26 @@ impl App {
                 .unwrap_or_else(|| self.doc().next(cursor));
                 self.move_cursor(target, shift);
             }
-            // Vertical movement counts visible lines, stepping over folded
-            // blocks instead of into them.
+            // Vertical movement goes by screen rows (a wrapped line has
+            // several, a folded block one) and keeps the caret's horizontal
+            // position.
             x if x == VK_UP as u32 => {
-                self.move_cursor(
-                    Pos {
-                        line: self.doc().step_visible_lines(cursor.line, -1),
-                        byte: cursor.byte,
-                    },
-                    shift,
-                );
+                let target = self.cursor_moved_by_rows(hwnd, -1);
+                self.move_cursor(target, shift);
             }
             x if x == VK_DOWN as u32 => {
-                self.move_cursor(
-                    Pos {
-                        line: self.doc().step_visible_lines(cursor.line, 1),
-                        byte: cursor.byte,
-                    },
-                    shift,
-                );
+                let target = self.cursor_moved_by_rows(hwnd, 1);
+                self.move_cursor(target, shift);
             }
             x if x == VK_PRIOR as u32 => {
                 let page = self.visible_lines(hwnd) as isize;
-                self.move_cursor(
-                    Pos {
-                        line: self.doc().step_visible_lines(cursor.line, -page),
-                        byte: cursor.byte,
-                    },
-                    shift,
-                );
+                let target = self.cursor_moved_by_rows(hwnd, -page);
+                self.move_cursor(target, shift);
             }
             x if x == VK_NEXT as u32 => {
                 let page = self.visible_lines(hwnd) as isize;
-                self.move_cursor(
-                    Pos {
-                        line: self.doc().step_visible_lines(cursor.line, page),
-                        byte: cursor.byte,
-                    },
-                    shift,
-                );
+                let target = self.cursor_moved_by_rows(hwnd, page);
+                self.move_cursor(target, shift);
             }
             x if x == VK_HOME as u32 => self.move_cursor(
                 Pos {
@@ -1073,24 +1059,15 @@ impl App {
     // the caret; debugging is keyed off document state, not editor selection.
     fn toggle_breakpoint_at(&mut self, hwnd: HWND, pane: usize, y: i32) {
         let tab_index = self.tab_for_pane(pane);
-        let first_line = self.view_for_pane(pane).first_line;
-        let row = ((y - self.editor_top()) / self.line_height).max(0) as usize;
-        let line = self.tabs[tab_index]
-            .document
-            .visual_row_to_doc_line(first_line, row)
-            .unwrap_or_else(|| self.tabs[tab_index].document.line_count().saturating_sub(1));
+        let (line, _) = self.row_at_y(hwnd, pane, y);
         self.tabs[tab_index].document.toggle_breakpoint(line);
         self.refresh(hwnd);
     }
 
     fn toggle_fold_at(&mut self, hwnd: HWND, pane: usize, y: i32) {
         let tab_index = self.tab_for_pane(pane);
-        let first_line = self.view_for_pane(pane).first_line;
-        let row = ((y - self.editor_top()) / self.line_height).max(0) as usize;
+        let (line, _) = self.row_at_y(hwnd, pane, y);
         let doc = &mut self.tabs[tab_index].document;
-        let line = doc
-            .visual_row_to_doc_line(first_line, row)
-            .unwrap_or_else(|| doc.line_count().saturating_sub(1));
         if doc.toggle_fold(line) {
             // A caret inside the block just folded moves to the fold's first
             // line; otherwise keep_cursor_visible would reveal it again and
@@ -1117,43 +1094,36 @@ impl App {
         self.position_at_pane(hwnd, x, y, self.focused_pane)
     }
 
+    // The document line and wrapped row at height `y` in `pane`; below the
+    // end of the document, its last row.
+    fn row_at_y(&self, hwnd: HWND, pane: usize, y: i32) -> (usize, usize) {
+        let screen_row = ((y - self.editor_top()) / self.line_height.max(1)).max(0) as usize;
+        self.at_screen_row(hwnd, pane, screen_row)
+            .unwrap_or_else(|| {
+                let doc = &self.tabs[self.tab_for_pane(pane)].document;
+                let last = doc.visible_line_for(doc.line_count() - 1);
+                (last, self.line_rows(hwnd, pane, last).count() - 1)
+            })
+    }
+
     pub(super) fn position_at_pane(&self, hwnd: HWND, x: i32, y: i32, pane: usize) -> Pos {
         let tab = &self.tabs[self.tab_for_pane(pane)];
-        let view = self.view_for_pane(pane);
-        let row = ((y - self.editor_top()) / self.line_height).max(0) as usize;
-        let line = tab
-            .document
-            .visual_row_to_doc_line(view.first_line, row)
-            .unwrap_or_else(|| tab.document.line_count().saturating_sub(1));
-        let target = (x - self.pane_left(hwnd, pane) - self.scale(GUTTER + PAD)).max(0);
+        let (line, row) = self.row_at_y(hwnd, pane, y);
+        let layout = self.line_rows(hwnd, pane, line);
+        let text = tab.document.line(line);
+        let row_left = self.pane_left(hwnd, pane)
+            + self.scale(GUTTER + PAD)
+            + layout.indent(row, self.char_width);
         unsafe {
             let hdc = GetDC(hwnd);
             let old = SelectObject(hdc, self.font);
-            let text = tab.document.line(line);
-            let boundaries: Vec<usize> = text
-                .char_indices()
-                .map(|(index, _)| index)
-                .chain(Some(text.len()))
-                .collect();
-            let mut low = 0;
-            let mut high = boundaries.len();
-            while low < high {
-                let mid = (low + high) / 2;
-                if self.text_width(hdc, &text[..boundaries[mid]]) < target {
-                    low = mid + 1;
-                } else {
-                    high = mid;
-                }
-            }
-            let right = low.min(boundaries.len() - 1);
-            let left = right.saturating_sub(1);
-            let left_width = self.text_width(hdc, &text[..boundaries[left]]);
-            let right_width = self.text_width(hdc, &text[..boundaries[right]]);
-            let byte = if target - left_width <= right_width - target {
-                boundaries[left]
-            } else {
-                boundaries[right]
-            };
+            let byte = self.nearest_byte(
+                hdc,
+                text,
+                (layout.start(row), layout.end(row, text.len())),
+                layout.is_last(row),
+                (x - row_left).max(0),
+            );
             SelectObject(hdc, old);
             ReleaseDC(hwnd, hdc);
             Pos { line, byte }

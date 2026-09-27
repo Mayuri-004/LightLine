@@ -106,6 +106,7 @@ cargo run --release
 | `Shift+F12` | Find all references to the symbol at cursor |
 | `Ctrl+Space` | Trigger autocompletion popup |
 | `Shift+Alt+F` | Format active document (Native JSON/TOML, Prettier, or active language server) |
+| `Alt+Z` | Toggle word wrap for the current file (on by default for Markdown) |
 | `Ctrl+Shift+V` | Markdown preview of the active `.md` file (`>Markdown: Open Preview to the Side` shows it beside the file) |
 | `F2` | In Explorer: Rename selected file or folder |
 | `Delete` | In Explorer: Delete selected file or folder (with confirmation) |
