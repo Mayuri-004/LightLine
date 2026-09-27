@@ -41,7 +41,13 @@ impl App {
             self.toggle_word_wrap(hwnd);
             return true;
         }
-        if self.ai_typing() && self.ai_key(hwnd, key, ctrl, shift) {
+        // The model search owns keys whenever its popup is open. Route it
+        // directly instead of depending on the chat composer's focus state.
+        if self.ai.model_menu_open {
+            if self.ai_key(hwnd, key, ctrl, shift) {
+                return true;
+            }
+        } else if self.ai_typing() && self.ai_key(hwnd, key, ctrl, shift) {
             return true;
         }
         if self.terminal_profile_menu_open && key == VK_ESCAPE as u32 && !ctrl && !shift {
@@ -856,6 +862,10 @@ impl App {
 
     pub(super) fn character(&mut self, hwnd: HWND, unit: u16) {
         if unsafe { GetKeyState(VK_CONTROL as i32) } < 0 {
+            return;
+        }
+        if self.ai.model_menu_open && self.ai_assistant_visible {
+            self.ai_char(hwnd, unit);
             return;
         }
         if self.ai_typing() {

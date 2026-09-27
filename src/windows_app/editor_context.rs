@@ -219,26 +219,26 @@ impl App {
         let s = |value: i32| self.scale(value);
         let mut specs = Vec::new();
         if menu.diagnostic.is_some() {
-            specs.push((ContextElementKind::Header, s(76)));
-            specs.push((ContextElementKind::Divider, s(11)));
+            specs.push((ContextElementKind::Header, s(64)));
+            specs.push((ContextElementKind::Divider, s(7)));
             specs.push((
                 ContextElementKind::Row {
                     action: EditorContextAction::ExplainError,
                     enabled: true,
                 },
-                s(42),
+                s(34),
             ));
             specs.push((
                 ContextElementKind::Row {
                     action: EditorContextAction::FixError,
                     enabled: true,
                 },
-                s(42),
+                s(34),
             ));
         }
         if menu.has_selection {
-            specs.push((ContextElementKind::Divider, s(11)));
-            specs.push((ContextElementKind::Section("AI · SELECTION"), s(26)));
+            specs.push((ContextElementKind::Divider, s(7)));
+            specs.push((ContextElementKind::Section("AI · SELECTION"), s(18)));
             for action in [
                 EditorContextAction::ExplainSelection,
                 EditorContextAction::FixSelection,
@@ -250,12 +250,12 @@ impl App {
                         action,
                         enabled: true,
                     },
-                    s(36),
+                    s(30),
                 ));
             }
         }
-        specs.push((ContextElementKind::Divider, s(11)));
-        specs.push((ContextElementKind::Section("EDIT"), s(26)));
+        specs.push((ContextElementKind::Divider, s(7)));
+        specs.push((ContextElementKind::Section("EDIT"), s(18)));
         for action in [
             EditorContextAction::Cut,
             EditorContextAction::Copy,
@@ -268,28 +268,28 @@ impl App {
                     enabled: menu.has_selection
                         || !matches!(action, EditorContextAction::Cut | EditorContextAction::Copy),
                 },
-                s(36),
+                s(30),
             ));
         }
-        specs.push((ContextElementKind::Divider, s(11)));
+        specs.push((ContextElementKind::Divider, s(7)));
         specs.push((
             ContextElementKind::Row {
                 action: EditorContextAction::CommandPalette,
                 enabled: true,
             },
-            s(40),
+            s(32),
         ));
 
-        let padding = s(10);
+        let padding = s(6);
         let height = specs.iter().map(|(_, height)| *height).sum::<i32>() + padding * 2;
         let mut client = RECT::default();
         unsafe { GetClientRect(hwnd, &mut client) };
         let min_left = self.editor_left() + s(12);
         let max_right = self.editor_right(hwnd) - s(12);
-        let width = s(390).min((max_right - min_left).max(s(260)));
-        let mut left = menu.anchor.x + s(12);
+        let width = s(310).min((max_right - min_left).max(s(240)));
+        let mut left = menu.anchor.x + s(8);
         if left + width > max_right {
-            left = menu.anchor.x - width - s(12);
+            left = menu.anchor.x - width - s(8);
         }
         left = left.clamp(min_left, (max_right - width).max(min_left));
         let min_top = self.chrome_top() + s(10);
@@ -307,7 +307,7 @@ impl App {
             .into_iter()
             .map(|(kind, height)| {
                 let inset = if matches!(kind, ContextElementKind::Row { .. }) {
-                    s(9)
+                    s(7)
                 } else {
                     0
                 };
@@ -472,11 +472,11 @@ impl App {
             right: layout.menu.right + s(5),
             bottom: layout.menu.bottom + s(6),
         };
-        Self::rounded_fill(hdc, shadow, s(11), ui(3, 8, 18));
+        Self::rounded_fill(hdc, shadow, s(9), ui(3, 8, 18));
         self.panel_card(
             hdc,
             layout.menu,
-            s(10),
+            s(8),
             self.theme.violet,
             self.theme.sidebar_bg,
         );
@@ -489,9 +489,9 @@ impl App {
                 ContextElementKind::Divider => Self::fill(
                     hdc,
                     RECT {
-                        left: layout.menu.left + s(14),
+                        left: layout.menu.left + s(11),
                         top: (element.rect.top + element.rect.bottom) / 2,
-                        right: layout.menu.right - s(14),
+                        right: layout.menu.right - s(11),
                         bottom: (element.rect.top + element.rect.bottom) / 2 + s(1).max(1),
                     },
                     self.theme.edge,
@@ -501,7 +501,7 @@ impl App {
                     self.label_mid(
                         hdc,
                         label,
-                        element.rect.left + s(20),
+                        element.rect.left + s(14),
                         (element.rect.top + element.rect.bottom) / 2,
                         self.theme.muted,
                         element.rect,
@@ -525,12 +525,12 @@ impl App {
             _ => self.theme.info,
         };
         let icon = RECT {
-            left: rect.left + s(18),
-            top: rect.top + s(15),
-            right: rect.left + s(58),
-            bottom: rect.top + s(55),
+            left: rect.left + s(14),
+            top: rect.top + s(13),
+            right: rect.left + s(48),
+            bottom: rect.top + s(47),
         };
-        Self::rounded_fill(hdc, icon, s(20), color);
+        Self::rounded_fill(hdc, icon, s(17), color);
         unsafe { SelectObject(hdc, self.brand_font) };
         let mark = "!";
         self.label_mid(
@@ -541,7 +541,7 @@ impl App {
             label_on(color, 255, 255, 255),
             icon,
         );
-        let text_left = icon.right + s(14);
+        let text_left = icon.right + s(11);
         let clip = RECT {
             left: text_left,
             right: rect.right - s(16),
@@ -551,7 +551,7 @@ impl App {
             hdc,
             &problem.title,
             text_left,
-            rect.top + s(13),
+            rect.top + s(9),
             self.theme.text,
             clip,
         );
@@ -565,7 +565,7 @@ impl App {
             hdc,
             &detail,
             text_left,
-            rect.top + s(41),
+            rect.top + s(34),
             self.theme.muted,
             clip,
         );
@@ -583,10 +583,10 @@ impl App {
         let highlighted = enabled && menu.highlighted == Some(action);
         if highlighted {
             if action == EditorContextAction::FixError {
-                self.gradient_card(hdc, rect, s(7), ui(35, 39, 96), ui(29, 34, 79));
-                self.card_outline(hdc, rect, s(7), ui(72, 65, 160));
+                self.gradient_card(hdc, rect, s(6), ui(35, 39, 96), ui(29, 34, 79));
+                self.card_outline(hdc, rect, s(6), ui(72, 65, 160));
             } else {
-                Self::rounded_fill(hdc, rect, s(7), self.theme.active_bg);
+                Self::rounded_fill(hdc, rect, s(6), self.theme.active_bg);
             }
         }
         let icon_color = if enabled {
@@ -599,9 +599,9 @@ impl App {
             ui(78, 91, 116)
         };
         let center_y = (rect.top + rect.bottom) / 2;
-        let icon_left = rect.left + s(16);
+        let icon_left = rect.left + s(11);
         if is_ai_action(action) {
-            self.sparkle_glyph(hdc, icon_left, center_y - s(8), s(16), icon_color);
+            self.sparkle_glyph(hdc, icon_left, center_y - s(7), s(14), icon_color);
         } else {
             self.draw_context_action_icon(hdc, action, icon_left, center_y, icon_color);
         }
@@ -613,35 +613,35 @@ impl App {
         } else {
             ui(81, 94, 119)
         };
-        let label_x = rect.left + s(52);
+        let label_x = rect.left + s(40);
         let shortcut = action_shortcut(action);
         let shortcut_width = if shortcut.is_empty() {
             0
         } else {
-            self.text_width(hdc, shortcut) + s(18)
+            self.text_width(hdc, shortcut) + s(14)
         };
         let label_clip = RECT {
             left: label_x,
-            right: rect.right - shortcut_width - s(16),
+            right: rect.right - shortcut_width - s(11),
             ..rect
         };
         self.label_mid(hdc, &label, label_x, center_y, text_color, label_clip);
 
         if action == EditorContextAction::FixError {
             let badge_text = "Recommended";
-            let badge_width = self.text_width(hdc, badge_text) + s(18);
-            let preferred = label_x + self.text_width(hdc, &label) + s(14);
+            let badge_width = self.text_width(hdc, badge_text) + s(14);
+            let preferred = label_x + self.text_width(hdc, &label) + s(10);
             let badge = RECT {
-                left: preferred.min(rect.right - badge_width - s(10)),
-                top: center_y - s(11),
-                right: (preferred + badge_width).min(rect.right - s(10)),
-                bottom: center_y + s(11),
+                left: preferred.min(rect.right - badge_width - s(7)),
+                top: center_y - s(9),
+                right: (preferred + badge_width).min(rect.right - s(7)),
+                bottom: center_y + s(9),
             };
-            Self::rounded_fill(hdc, badge, s(6), self.theme.violet);
+            Self::rounded_fill(hdc, badge, s(5), self.theme.violet);
             self.label_mid(
                 hdc,
                 badge_text,
-                badge.left + s(9),
+                badge.left + s(7),
                 center_y,
                 label_on(self.theme.violet, 255, 255, 255),
                 badge,
@@ -650,15 +650,15 @@ impl App {
 
         if !shortcut.is_empty() {
             let badge = RECT {
-                left: rect.right - shortcut_width - s(8),
-                top: center_y - s(12),
-                right: rect.right - s(8),
-                bottom: center_y + s(12),
+                left: rect.right - shortcut_width - s(6),
+                top: center_y - s(10),
+                right: rect.right - s(6),
+                bottom: center_y + s(10),
             };
             self.panel_card(
                 hdc,
                 badge,
-                s(6),
+                s(5),
                 self.theme.edge,
                 if highlighted {
                     ui(27, 43, 75)

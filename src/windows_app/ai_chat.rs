@@ -252,6 +252,18 @@ pub(super) fn model_menu_models(
     cloud.into_iter().chain(local).collect()
 }
 
+// Printable virtual keys must continue through the normal Windows text-input
+// path so TranslateMessage/WM_CHAR can supply the actual character (including
+// keyboard-layout and Shift handling) to the model search field.
+fn model_search_text_key(key: u32) -> bool {
+    key == VK_SPACE as u32
+        || (0x30..=0x39).contains(&key)
+        || (0x41..=0x5a).contains(&key)
+        || (VK_NUMPAD0 as u32..=VK_DIVIDE as u32).contains(&key)
+        || (0xba..=0xdf).contains(&key)
+        || key == 0xe2
+}
+
 // The language tag for a fenced code block, from the file's extension.
 fn fence_language(path: Option<&Path>) -> String {
     path.and_then(Path::extension)
@@ -888,6 +900,9 @@ impl App {
         self.ai.focused = false;
         self.ai.model_query.clear();
         self.ai.model_menu_first = 0;
+        if self.ai.model_menu_open {
+            unsafe { SetFocus(hwnd) };
+        }
         unsafe { InvalidateRect(hwnd, null(), 0) };
     }
 
@@ -909,6 +924,12 @@ impl App {
         }
         let hits = self.ai.hits.borrow().clone();
         if self.ai.model_menu_open {
+            if hits.model_search.as_ref().is_some_and(inside) {
+                self.ai.focused = false;
+                unsafe { SetFocus(hwnd) };
+                unsafe { InvalidateRect(hwnd, null(), 0) };
+                return;
+            }
             if let Some((_, model)) = hits.model_rows.iter().find(|(rect, _)| inside(rect)) {
                 self.ai.model_menu_open = false;
                 self.set_ai_model(Some(model.clone()));
@@ -1037,6 +1058,7 @@ impl App {
                 }
                 _ if (VK_F1 as u32..=VK_F24 as u32).contains(&key) => false,
                 _ if ctrl => false,
+                _ if model_search_text_key(key) => false,
                 _ => true,
             };
         }
@@ -1154,6 +1176,9 @@ mod tests {
             model_menu_models(&models, None, "CoDeR"),
             ["qwen2.5-coder:7b"]
         );
+        assert!(model_search_text_key(0x51)); // Q
+        assert!(model_search_text_key(0xbd)); // -
+        assert!(!model_search_text_key(VK_LEFT as u32));
     }
 
     #[test]
