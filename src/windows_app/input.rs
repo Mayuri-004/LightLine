@@ -1340,6 +1340,33 @@ impl App {
         }
         let rail = self.scale(RAIL);
         let editor_left = self.editor_left();
+        // The themed debug picker behaves like a popup: its rows take the
+        // click first, and clicking anywhere else dismisses it before normal
+        // workbench hit-testing continues.
+        if self.debug_config_menu_open {
+            let panel_y = y - self.chrome_top();
+            let menu = self.debug_config_menu_rect(rail, editor_left);
+            if x >= menu.left && x < menu.right && panel_y >= menu.top && panel_y < menu.bottom {
+                if let Some(index) = self.debug_config_menu_row(panel_y) {
+                    let choice = match index {
+                        0 => None,
+                        1 => Some(DebugConfig::RustWorkspace),
+                        _ => Some(DebugConfig::PythonFile),
+                    };
+                    self.select_debug_config(hwnd, choice);
+                }
+                return;
+            }
+            let selector = self.debug_config_rect(rail, editor_left);
+            let on_selector = x >= selector.left
+                && x < selector.right
+                && panel_y >= selector.top
+                && panel_y < selector.bottom;
+            if !on_selector {
+                self.debug_config_menu_open = false;
+                unsafe { InvalidateRect(hwnd, null(), 0) };
+            }
+        }
         if x < rail {
             self.terminal_focus = false;
             let y = y - self.chrome_top();
@@ -1617,7 +1644,13 @@ impl App {
                     // paint_extensions_panel).
                     if row < visible.len() && ey + card_h <= bottom {
                         let card_right = editor_left - s(8);
-                        let btn_w = s(72);
+                        let btn_w = s(if visible[row].installing {
+                            86
+                        } else if visible[row].installed {
+                            82
+                        } else {
+                            72
+                        });
                         let btn_h = s(26);
                         let btn_left = card_right - btn_w - s(10);
                         let btn_right = card_right - s(10);
@@ -1780,20 +1813,21 @@ impl App {
             unsafe { SetCapture(hwnd) };
             return;
         }
-        // The editor is a card inset from the window edge, so the tab strip's
-        // controls are measured from the card's right edge, not the window's.
-        let card_right = rect.right - self.chrome_gap();
         if y < self.tab_strip_bottom() {
             let command = self.command_center_rect(hwnd);
             if x >= command.left && x < command.right && y >= command.top && y < command.bottom {
                 self.show_quick_open(hwnd);
                 return;
             }
-            if Tab::is_runnable(self.doc())
-                && x >= card_right - self.scale(82)
-                && x < card_right - self.scale(50)
+            let button = self.file_action_rect(hwnd);
+            if let Some(action) = self.file_action()
+                && x >= button.left
+                && x < button.right
             {
-                self.run_active_file(hwnd);
+                match action {
+                    FileAction::Run => self.run_active_file(hwnd),
+                    FileAction::PreviewMarkdown => self.open_markdown_preview(hwnd, true),
+                }
                 return;
             }
             let slot = ((x - editor_left).max(0) / self.scale(TAB_WIDTH).max(1)) as usize;

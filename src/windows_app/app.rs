@@ -149,6 +149,21 @@ pub(super) fn replace_all_edit(
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum FileAction {
+    Run,
+    PreviewMarkdown,
+}
+
+impl FileAction {
+    pub(super) fn hint(self) -> &'static str {
+        match self {
+            FileAction::Run => "Run File (Ctrl+Shift+R)",
+            FileAction::PreviewMarkdown => "Open Preview to the Side",
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum ExtensionsTab {
     Marketplace,
     Installed,
@@ -629,6 +644,9 @@ pub(super) struct App {
     // The configuration picked in the Run & Debug dropdown; None follows the
     // active file (see App::auto_debug_config).
     pub(super) debug_config: Option<DebugConfig>,
+    // Custom-drawn launch picker. Keeping it in the workbench surface avoids
+    // the bright, platform-native popup that clashes with the dark theme.
+    pub(super) debug_config_menu_open: bool,
     // Folders whose Markdown previews may load web images; read from disk
     // when the first preview opens.
     pub(super) web_image_folders: Option<Vec<PathBuf>>,
@@ -1102,6 +1120,7 @@ impl App {
             debug_pending_breakpoints: Vec::new(),
             debug_sections_expanded: [true; 3],
             debug_config: None,
+            debug_config_menu_open: false,
             web_image_folders: None,
             extensions_search_active: false,
         }
@@ -1521,6 +1540,38 @@ impl App {
             bottom,
         };
         (split, more)
+    }
+
+    // What the button at the right end of the tab strip does for the active
+    // file: run it (Python, C/C++) or preview it beside itself (Markdown).
+    pub(super) fn file_action(&self) -> Option<FileAction> {
+        if self.welcome || self.tab().read_only() {
+            return None;
+        }
+        let doc = self.doc();
+        if Tab::is_runnable(doc) {
+            Some(FileAction::Run)
+        } else if doc
+            .path
+            .as_deref()
+            .is_some_and(lightline::markdown::is_markdown_path)
+        {
+            Some(FileAction::PreviewMarkdown)
+        } else {
+            None
+        }
+    }
+
+    // Where that button sits. Painting, clicks and the hover hint all use
+    // this, so what is drawn is exactly what responds.
+    pub(super) fn file_action_rect(&self, hwnd: HWND) -> RECT {
+        let right = self.editor_right(hwnd);
+        RECT {
+            left: right - self.scale(82),
+            top: self.chrome_top(),
+            right: right - self.scale(50),
+            bottom: self.tab_strip_bottom(),
+        }
     }
 
     pub(super) fn set_sidebar_visible(&mut self, hwnd: HWND, visible: bool) {

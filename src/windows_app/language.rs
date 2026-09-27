@@ -615,12 +615,16 @@ impl App {
                         0
                     },
             );
-        if y < self.scale(TAB_HEIGHT)
-            && Tab::is_runnable(self.doc())
-            && x >= rect.right - self.scale(326)
-            && x < rect.right - self.scale(296)
+        // The tab strip's action button says what it does; this used to test
+        // a stale spot in the title bar, so the Run hint never appeared.
+        let button = self.file_action_rect(hwnd);
+        if let Some(action) = self.file_action()
+            && x >= button.left
+            && x < button.right
+            && y >= button.top
+            && y < button.bottom
         {
-            let hint = "Run File (Ctrl+Shift+R)";
+            let hint = action.hint();
             if self.status != hint {
                 self.status = hint.into();
                 unsafe { InvalidateRect(hwnd, null(), 0) };

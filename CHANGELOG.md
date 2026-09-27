@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 #### Added
-- **Markdown Preview** ([#45](https://github.com/mehmoodulhaq570/LightLine/issues/45)): `.md` files and READMEs render inside LightLine. Run **Markdown: Open Preview** (`Ctrl+Shift+V`) for a preview tab, or **Markdown: Open Preview to the Side** to see it next to the file as you type.
+- **Markdown Preview** ([#45](https://github.com/mehmoodulhaq570/LightLine/issues/45)): `.md` files and READMEs render inside LightLine. Run **Markdown: Open Preview** (`Ctrl+Shift+V`) for a preview tab, or **Markdown: Open Preview to the Side** to see it next to the file as you type. A Markdown file also gets an **Open Preview to the Side** button at the right end of the tab bar, where code files show their Run button.
   - Headings, paragraphs, bold/italic/strikethrough, inline code, links, numbered and nested lists, task lists, block quotes, code blocks, tables (with column alignment), rules and images are shown.
   - Web links open in your browser, links to other files in the workspace open in LightLine, and `#heading` links scroll to the heading. Links that point outside the workspace or use other schemes (`javascript:`, `file:`) are refused.
   - Local images are shown, including SVG. Images in a line of text, such as README badges, sit side by side in that line and keep their links.
@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **No Stray "Untitled" Tab**: Opening a folder (or closing the last file) no longer shows an empty "Untitled" tab. The editor says no file is open and how to open one; `Ctrl+N` still creates a real Untitled file.
 
 #### Fixed
+- **Run Button Hint**: Hovering the tab bar's Run button now shows "Run File (Ctrl+Shift+R)" in the status bar; it checked the wrong spot, so the hint never appeared.
 - **Replace All No Longer Hangs**: Replacing text with something that contains it (e.g. `foo` → `self.foo`) looped forever. Replace All now finds every match first and applies them as a single edit, which is also a single undo step.
 - **Fast Saves**: Saving wrote each line with its own system call; a 100,000-line file took about 2 seconds and now takes about 20 ms.
 - **No Color Flicker While Typing**: Rust and Python syntax colors no longer vanish on every keystroke until the parser catches up. The previous colors move with the text until the new ones arrive.

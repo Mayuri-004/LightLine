@@ -701,6 +701,25 @@ impl App {
         }
     }
 
+    pub(in crate::windows_app) fn debug_config_menu_rect(&self, left: i32, right: i32) -> RECT {
+        RECT {
+            left: left + self.scale(8),
+            top: self.scale(92),
+            right: right - self.scale(8),
+            bottom: self.scale(236),
+        }
+    }
+
+    pub(in crate::windows_app) fn debug_config_menu_row(&self, y: i32) -> Option<usize> {
+        let top = self.scale(98);
+        let row_height = self.scale(44).max(1);
+        if y < top || y >= top + row_height * 3 {
+            None
+        } else {
+            Some(((y - top) / row_height) as usize)
+        }
+    }
+
     // Geometry shared with the click handler in input.rs: six compact debug
     // controls below the launch configuration.
     pub(in crate::windows_app) fn debug_toolbar_button(
@@ -1058,7 +1077,7 @@ impl App {
         let paused = self.debug_paused();
 
         let config = self.debug_config_rect(left, right);
-        self.panel_card(hdc, config, s(5), rgb(42, 65, 105), rgb(13, 23, 42));
+        self.panel_card(hdc, config, s(6), rgb(52, 78, 119), rgb(12, 23, 42));
         // A session shows what it launched; otherwise what F5 would launch now.
         let shown_config = if has_session || self.debug_pending_root.is_some() {
             state.config
@@ -1086,7 +1105,7 @@ impl App {
             hdc,
             config.right - s(14),
             (config.top + config.bottom) / 2,
-            false,
+            true,
         );
         let start = self.debug_start_button(right);
         self.panel_card(
@@ -1152,7 +1171,7 @@ impl App {
             right: right - s(8),
             bottom: status_top + s(58),
         };
-        self.panel_card(hdc, status_rect, s(6), rgb(38, 58, 91), rgb(15, 27, 49));
+        self.panel_card(hdc, status_rect, s(7), rgb(35, 55, 86), rgb(12, 24, 44));
         let failed = state.status.starts_with("Build failed")
             || state.status.starts_with("Could not")
             || state.status.contains("not found")
@@ -1284,15 +1303,22 @@ impl App {
             if *y + s(28) > bottom {
                 continue;
             }
+            let header = RECT {
+                left: left + s(8),
+                top: *y + s(2),
+                right: right - s(8),
+                bottom: *y + s(26),
+            };
+            self.panel_card(hdc, header, s(5), rgb(31, 51, 82), rgb(13, 26, 47));
             Self::fill(
                 hdc,
                 RECT {
-                    left,
-                    top: *y,
-                    right,
-                    bottom: *y + s(28),
+                    left: header.left,
+                    top: header.top + s(5),
+                    right: header.left + s(2),
+                    bottom: header.bottom - s(5),
                 },
-                self.theme.active_bg,
+                rgb(56, 189, 248),
             );
             Self::label(
                 hdc,
@@ -1301,23 +1327,32 @@ impl App {
                 } else {
                     "\u{25b8}"
                 },
-                left + s(8),
+                left + s(17),
                 *y + s(5),
-                rgb(86, 164, 225),
+                rgb(105, 180, 235),
                 clip,
             );
-            Self::label(hdc, title, left + s(24), *y + s(5), rgb(86, 164, 225), clip);
-            let badge = RECT {
-                left: right - s(35),
-                top: *y + s(4),
-                right: right - s(10),
-                bottom: *y + s(24),
-            };
-            self.panel_card(hdc, badge, s(9), rgb(48, 70, 108), rgb(24, 40, 69));
             Self::label(
                 hdc,
-                &count.to_string(),
-                badge.left + s(8),
+                title,
+                left + s(33),
+                *y + s(5),
+                rgb(190, 208, 232),
+                clip,
+            );
+            let badge = RECT {
+                left: right - s(40),
+                top: *y + s(5),
+                right: right - s(14),
+                bottom: *y + s(23),
+            };
+            self.panel_card(hdc, badge, s(9), rgb(45, 68, 105), rgb(20, 36, 62));
+            let count_text = count.to_string();
+            let count_width = self.text_width(hdc, &count_text);
+            Self::label(
+                hdc,
+                &count_text,
+                badge.left + (badge.right - badge.left - count_width) / 2,
                 *y + s(5),
                 rgb(205, 220, 245),
                 clip,
@@ -1561,6 +1596,106 @@ impl App {
                 );
                 y += s(24);
             }
+        }
+
+        // Draw last so the picker reads as a floating surface and cleanly
+        // obscures the status/section content underneath it.
+        if self.debug_config_menu_open {
+            self.paint_debug_config_menu(hdc, left, right, clip);
+        }
+    }
+
+    fn paint_debug_config_menu(&self, hdc: HDC, left: i32, right: i32, clip: RECT) {
+        let s = |v: i32| self.scale(v);
+        let menu = self.debug_config_menu_rect(left, right);
+
+        // A small offset shadow separates the popup from the dense sidebar.
+        Self::rounded_fill(
+            hdc,
+            RECT {
+                left: menu.left + s(3),
+                top: menu.top + s(4),
+                right: menu.right + s(3),
+                bottom: menu.bottom + s(4),
+            },
+            s(7),
+            rgb(5, 11, 22),
+        );
+        self.panel_card(hdc, menu, s(7), rgb(55, 79, 118), rgb(13, 24, 43));
+
+        let automatic_detail = match self.auto_debug_config() {
+            Some(DebugConfig::RustWorkspace) => "Follows editor  \u{00b7}  Rust workspace",
+            Some(DebugConfig::PythonFile) => "Follows editor  \u{00b7}  Python file",
+            None => "Follows editor  \u{00b7}  Nothing detected",
+        };
+        let rows = [
+            ("Automatic", automatic_detail, self.debug_config.is_none()),
+            (
+                "Rust workspace",
+                "Cargo workspace  \u{00b7}  LLDB",
+                self.debug_config == Some(DebugConfig::RustWorkspace),
+            ),
+            (
+                "Python file",
+                "Active editor  \u{00b7}  debugpy",
+                self.debug_config == Some(DebugConfig::PythonFile),
+            ),
+        ];
+        let row_height = s(44);
+        let row_top = s(98);
+        for (index, (title, detail, selected)) in rows.iter().enumerate() {
+            let top = row_top + row_height * index as i32;
+            if *selected {
+                Self::rounded_fill(
+                    hdc,
+                    RECT {
+                        left: menu.left + s(5),
+                        top,
+                        right: menu.right - s(5),
+                        bottom: top + row_height,
+                    },
+                    s(5),
+                    rgb(22, 49, 82),
+                );
+                Self::fill(
+                    hdc,
+                    RECT {
+                        left: menu.left + s(5),
+                        top: top + s(8),
+                        right: menu.left + s(7),
+                        bottom: top + row_height - s(8),
+                    },
+                    rgb(56, 189, 248),
+                );
+            }
+            Self::label(
+                hdc,
+                if *selected { "\u{2713}" } else { "" },
+                menu.left + s(14),
+                top + s(4),
+                rgb(110, 211, 250),
+                clip,
+            );
+            Self::label(
+                hdc,
+                title,
+                menu.left + s(36),
+                top + s(3),
+                if *selected {
+                    rgb(244, 248, 255)
+                } else {
+                    rgb(208, 220, 239)
+                },
+                clip,
+            );
+            Self::label(
+                hdc,
+                detail,
+                menu.left + s(36),
+                top + s(22),
+                rgb(123, 146, 180),
+                clip,
+            );
         }
     }
 
@@ -2430,14 +2565,26 @@ impl App {
                 right: right - s(8),
                 bottom: y + card_h,
             };
-            self.panel_card(hdc, card, s(6), rgb(35, 52, 84), rgb(15, 25, 44));
+            self.panel_card(hdc, card, s(6), rgb(39, 59, 94), rgb(13, 24, 43));
+            // A restrained top highlight gives each entry the layered card
+            // treatment from the visual mockup without increasing density.
+            Self::fill(
+                hdc,
+                RECT {
+                    left: card.left + s(7),
+                    top: card.top + s(1),
+                    right: card.right - s(7),
+                    bottom: card.top + s(2),
+                },
+                rgb(27, 45, 73),
+            );
             let icon = RECT {
                 left: card.left + s(10),
                 top: card.top + s(12),
                 right: card.left + s(56),
                 bottom: card.top + s(58),
             };
-            let content_x = icon.right + s(10);
+            let content_x = icon.right + s(11);
             if ext.id == "prettier" {
                 self.panel_card(hdc, icon, s(6), rgb(47, 63, 96), rgb(22, 29, 47));
                 unsafe { SelectObject(hdc, self.brand_font) };
@@ -2499,6 +2646,8 @@ impl App {
             }
 
             let title = ext.name.split(" - ").next().unwrap_or(&ext.name);
+            let version_width = self.text_width(hdc, &ext.version);
+            let version_left = card.right - s(11) - version_width;
             unsafe { SelectObject(hdc, self.brand_font) };
             self.label_ellipsis(
                 hdc,
@@ -2509,7 +2658,7 @@ impl App {
                 RECT {
                     left: content_x,
                     top: card.top,
-                    right: card.right - s(70),
+                    right: version_left - s(9),
                     bottom: card.bottom,
                 },
             );
@@ -2517,11 +2666,11 @@ impl App {
             self.label_ellipsis(
                 hdc,
                 &ext.version,
-                card.right - s(46),
+                version_left,
                 card.top + s(9),
                 rgb(130, 151, 184),
                 RECT {
-                    left: card.right - s(46),
+                    left: version_left,
                     top: card.top,
                     right: card.right - s(8),
                     bottom: card.bottom,
@@ -2566,38 +2715,54 @@ impl App {
                     bottom: card.bottom,
                 },
             );
+            let action_text = if ext.installing {
+                "Checking..."
+            } else if ext.installed {
+                "\u{2713} Installed"
+            } else {
+                "Install"
+            };
+            let action_width = s(if ext.installing {
+                86
+            } else if ext.installed {
+                82
+            } else {
+                72
+            });
             let action = RECT {
-                left: card.right - s(82),
+                left: card.right - s(10) - action_width,
                 top: card.top + s(80),
                 right: card.right - s(10),
                 bottom: card.top + s(106),
             };
             if ext.installing {
                 self.panel_card(hdc, action, s(4), rgb(56, 189, 248), rgb(22, 48, 83));
+                let width = self.text_width(hdc, action_text);
                 Self::label(
                     hdc,
-                    "Checking...",
-                    action.left + s(8),
+                    action_text,
+                    action.left + (action.right - action.left - width) / 2,
                     action.top + s(4),
                     rgb(190, 228, 250),
                     action,
                 );
             } else if ext.installed {
                 self.panel_card(hdc, action, s(4), rgb(29, 145, 84), rgb(15, 58, 45));
+                let width = self.text_width(hdc, action_text);
                 Self::label(
                     hdc,
-                    "\u{2713} Installed",
-                    action.left + s(8),
+                    action_text,
+                    action.left + (action.right - action.left - width) / 2,
                     action.top + s(4),
                     rgb(202, 250, 220),
                     action,
                 );
             } else {
                 Self::rounded_fill(hdc, action, s(4), rgb(15, 116, 177));
-                let width = self.text_width(hdc, "Install");
+                let width = self.text_width(hdc, action_text);
                 Self::label(
                     hdc,
-                    "Install",
+                    action_text,
                     action.left + (action.right - action.left - width) / 2,
                     action.top + s(4),
                     rgb(255, 255, 255),
@@ -2665,14 +2830,15 @@ impl App {
                     DeleteObject(brush);
                 }
                 Self::label(hdc, name, left + s(27), row_y, self.theme.text, clip);
+                let detail_x = left + s(27) + self.text_width(hdc, name) + s(12);
                 self.label_ellipsis(
                     hdc,
                     detail,
-                    left + s(104),
+                    detail_x,
                     row_y,
                     self.theme.muted,
                     RECT {
-                        left,
+                        left: detail_x,
                         top: clip.top,
                         right: right - s(10),
                         bottom: clip.bottom,

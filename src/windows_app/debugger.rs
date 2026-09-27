@@ -458,62 +458,19 @@ impl App {
 
     // The configuration dropdown: Automatic follows the active file; picking
     // Rust or Python pins that configuration until Automatic is chosen again.
-    pub(super) fn show_debug_config_menu(&mut self, hwnd: HWND, x: i32, y: i32) {
-        use windows_sys::Win32::Graphics::Gdi::ClientToScreen;
-        use windows_sys::Win32::UI::WindowsAndMessaging::{
-            AppendMenuW, CreatePopupMenu, DestroyMenu, MF_CHECKED, MF_SEPARATOR, MF_STRING,
-            MF_UNCHECKED, TPM_LEFTALIGN, TPM_RETURNCMD, TrackPopupMenu,
-        };
+    // The menu is painted by the sidebar so it shares the workbench theme.
+    pub(super) fn show_debug_config_menu(&mut self, hwnd: HWND, _x: i32, _y: i32) {
         if self.debug.is_some() || self.debug_pending_root.is_some() {
             self.status = "Stop the debug session to change its configuration".into();
             unsafe { InvalidateRect(hwnd, null(), 0) };
             return;
         }
-        const CMD_AUTOMATIC: usize = 1;
-        const CMD_RUST: usize = 2;
-        const CMD_PYTHON: usize = 3;
-        let menu = unsafe { CreatePopupMenu() };
-        if menu.is_null() {
-            return;
-        }
-        let automatic = match self.auto_debug_config() {
-            Some(config) => format!("Automatic ({})", config.label()),
-            None => "Automatic (nothing to debug in the active file)".to_string(),
-        };
-        let items = [
-            (CMD_AUTOMATIC, automatic, self.debug_config.is_none()),
-            (
-                CMD_RUST,
-                "Rust: Current Workspace  \u{2014}  LLDB".to_string(),
-                self.debug_config == Some(DebugConfig::RustWorkspace),
-            ),
-            (
-                CMD_PYTHON,
-                "Python: Current File  \u{2014}  debugpy".to_string(),
-                self.debug_config == Some(DebugConfig::PythonFile),
-            ),
-        ];
-        for (index, (command, text, checked)) in items.iter().enumerate() {
-            let flags = MF_STRING | if *checked { MF_CHECKED } else { MF_UNCHECKED };
-            unsafe {
-                AppendMenuW(menu, flags, *command, wide(text).as_ptr());
-                if index == 0 {
-                    AppendMenuW(menu, MF_SEPARATOR, 0, null());
-                }
-            }
-        }
-        let mut point = POINT { x, y };
-        unsafe { ClientToScreen(hwnd, &mut point) };
-        let flags = TPM_RETURNCMD | TPM_LEFTALIGN;
-        let selected =
-            unsafe { TrackPopupMenu(menu, flags, point.x, point.y, 0, hwnd, null()) } as usize;
-        unsafe { DestroyMenu(menu) };
-        let choice = match selected {
-            CMD_AUTOMATIC => None,
-            CMD_RUST => Some(DebugConfig::RustWorkspace),
-            CMD_PYTHON => Some(DebugConfig::PythonFile),
-            _ => return,
-        };
+        self.debug_config_menu_open = !self.debug_config_menu_open;
+        unsafe { InvalidateRect(hwnd, null(), 0) };
+    }
+
+    pub(super) fn select_debug_config(&mut self, hwnd: HWND, choice: Option<DebugConfig>) {
+        self.debug_config_menu_open = false;
         self.debug_config = choice;
         self.debug_state = DebugState {
             status: "Not running".into(),

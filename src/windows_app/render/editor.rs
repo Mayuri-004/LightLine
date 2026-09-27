@@ -106,6 +106,33 @@ impl App {
         }
     }
 
+    // VS Code's "Open Preview to the Side" glyph: a page split in two, lines
+    // of text on the left half and a magnifying glass on the right.
+    fn paint_preview_icon(&self, hdc: HDC, button: RECT) {
+        let s = |value: i32| self.scale(value);
+        let size = s(16);
+        let x = button.left + (button.right - button.left - size) / 2;
+        let y = button.top + (button.bottom - button.top - size) / 2;
+        unsafe {
+            let pen = CreatePen(PS_SOLID, (s(3) / 2).max(1), self.theme.muted);
+            let old_pen = SelectObject(hdc, pen);
+            let old_brush = SelectObject(hdc, GetStockObject(NULL_BRUSH));
+            Rectangle(hdc, x + s(1), y + s(2), x + s(16), y + s(15));
+            MoveToEx(hdc, x + s(8), y + s(2), null_mut());
+            LineTo(hdc, x + s(8), y + s(15));
+            for row in [5, 8, 11] {
+                MoveToEx(hdc, x + s(3), y + s(row), null_mut());
+                LineTo(hdc, x + s(6), y + s(row));
+            }
+            Ellipse(hdc, x + s(9), y + s(4), x + s(14), y + s(9));
+            MoveToEx(hdc, x + s(13), y + s(8), null_mut());
+            LineTo(hdc, x + s(15), y + s(12));
+            SelectObject(hdc, old_brush);
+            SelectObject(hdc, old_pen);
+            DeleteObject(pen);
+        }
+    }
+
     pub(in crate::windows_app) fn paint(&mut self, hwnd: HWND) {
         unsafe {
             let mut ps = PAINTSTRUCT::default();
@@ -549,36 +576,43 @@ impl App {
                     1,
                 );
             }
-            if Tab::is_runnable(self.doc())
+            // The active file's action button: run it, or preview Markdown.
+            if let Some(action) = self.file_action()
                 && editor_left
                     + self.scale(TAB_WIDTH) * self.tabs.len().saturating_sub(self.tab_first) as i32
                     + self.scale(12)
                     < editor_card.right - self.scale(92)
             {
-                let left = editor_card.right - self.scale(78);
-                let brush = CreateSolidBrush(self.theme.green);
-                let pen = CreatePen(PS_SOLID, 1, self.theme.green);
-                let old_brush = SelectObject(hdc, brush);
-                let old_pen = SelectObject(hdc, pen);
-                let points = [
-                    POINT {
-                        x: left + self.scale(9),
-                        y: chrome_top + self.scale(11),
-                    },
-                    POINT {
-                        x: left + self.scale(9),
-                        y: chrome_top + self.scale(27),
-                    },
-                    POINT {
-                        x: left + self.scale(23),
-                        y: chrome_top + self.scale(19),
-                    },
-                ];
-                Polygon(hdc, points.as_ptr(), 3);
-                SelectObject(hdc, old_brush);
-                SelectObject(hdc, old_pen);
-                DeleteObject(brush);
-                DeleteObject(pen);
+                let button = self.file_action_rect(hwnd);
+                match action {
+                    FileAction::PreviewMarkdown => self.paint_preview_icon(hdc, button),
+                    FileAction::Run => {
+                        let left = button.left + self.scale(4);
+                        let brush = CreateSolidBrush(self.theme.green);
+                        let pen = CreatePen(PS_SOLID, 1, self.theme.green);
+                        let old_brush = SelectObject(hdc, brush);
+                        let old_pen = SelectObject(hdc, pen);
+                        let points = [
+                            POINT {
+                                x: left + self.scale(9),
+                                y: chrome_top + self.scale(11),
+                            },
+                            POINT {
+                                x: left + self.scale(9),
+                                y: chrome_top + self.scale(27),
+                            },
+                            POINT {
+                                x: left + self.scale(23),
+                                y: chrome_top + self.scale(19),
+                            },
+                        ];
+                        Polygon(hdc, points.as_ptr(), 3);
+                        SelectObject(hdc, old_brush);
+                        SelectObject(hdc, old_pen);
+                        DeleteObject(brush);
+                        DeleteObject(pen);
+                    }
+                }
             }
 
             // Persistent command center: a compact, clickable Ctrl+P surface
