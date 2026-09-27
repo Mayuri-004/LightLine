@@ -199,6 +199,13 @@ unsafe extern "system" fn wnd_proc(
             app.start_gutter_diff();
             0
         }
+        WM_TIMER if wparam == MARKDOWN_TIMER => {
+            unsafe {
+                KillTimer(hwnd, MARKDOWN_TIMER);
+                InvalidateRect(hwnd, null(), 0);
+            }
+            0
+        }
         WM_TIMER if wparam == STATUS_TIMER => {
             unsafe {
                 KillTimer(hwnd, STATUS_TIMER);
@@ -465,6 +472,12 @@ unsafe extern "system" fn wnd_proc(
             if app.split_visible && point.x >= app.editor_left() && point.y >= app.editor_top() {
                 let pane = usize::from(point.x >= app.pane_divider(hwnd));
                 app.focus_pane(hwnd, pane);
+            }
+            // A Markdown preview scrolls by pixels, not document lines.
+            if app.tab().markdown.is_some() {
+                let pixels = -(delta as i32) * app.scale(48) / 120;
+                app.scroll_markdown(hwnd, pixels);
+                return 0;
             }
             // Scroll by visible lines, so a folded block counts as one row.
             if delta != 0 {

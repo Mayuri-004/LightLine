@@ -237,6 +237,9 @@ pub(super) struct Tab {
     // editor always needs one tab). It gets no tab or breadcrumb, and the
     // pane shows how to open a file instead; Ctrl+N makes it a real file.
     pub(super) placeholder: bool,
+    // Some for a rendered, read-only preview of a Markdown file; `document`
+    // is then an empty placeholder with no path.
+    pub(super) markdown: Option<MarkdownPreview>,
 }
 
 #[derive(Clone)]
@@ -306,7 +309,23 @@ impl Tab {
             image: None,
             binary_preview: false,
             placeholder: false,
+            markdown: None,
         }
+    }
+
+    pub(super) fn new_markdown_preview(source: PathBuf) -> Self {
+        let mut tab = Self::new(Document::new());
+        tab.markdown = Some(MarkdownPreview::new(source));
+        tab
+    }
+
+    // The file this tab shows: its own path, or the Markdown file it previews.
+    pub(super) fn display_path(&self) -> Option<&Path> {
+        self.document.path.as_deref().or_else(|| {
+            self.markdown
+                .as_ref()
+                .map(|preview| preview.source.as_path())
+        })
     }
 
     // The empty stand-in document shown as "no file open" (see `placeholder`).
@@ -350,13 +369,14 @@ impl Tab {
             image: None,
             binary_preview: true,
             placeholder: false,
+            markdown: None,
         }
     }
 
     // True for a generated preview (image or hex dump) whose content is not
     // real document text and must be treated as read-only everywhere else.
     pub(super) fn read_only(&self) -> bool {
-        self.image.is_some() || self.binary_preview
+        self.image.is_some() || self.binary_preview || self.markdown.is_some()
     }
 
     pub(super) fn is_rust(document: &Document) -> bool {
@@ -1589,6 +1609,7 @@ impl App {
             // open, invisible, beside it.
             self.tab_mut().placeholder = false;
         } else if !from_welcome
+            || self.tab().read_only()
             || self.doc().path.is_some()
             || self.doc().is_dirty()
             || !self.doc().line(0).is_empty()
@@ -1633,7 +1654,12 @@ impl App {
     }
 
     pub(super) fn tab_label(&self, index: usize) -> String {
-        let doc = &self.tabs[index].document;
+        let tab = &self.tabs[index];
+        if let Some(preview) = &tab.markdown {
+            let name = preview.source.file_name().unwrap_or_default();
+            return format!("Preview {}", name.to_string_lossy());
+        }
+        let doc = &tab.document;
         let name = doc
             .path
             .as_ref()
@@ -1959,18 +1985,7 @@ impl App {
             unsafe { SetWindowTextW(hwnd, wide("LightLine").as_ptr()) };
             return;
         }
-        let file = self
-            .doc()
-            .path
-            .as_ref()
-            .and_then(|p| p.file_name())
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "Untitled".into());
-        let title = format!(
-            "{}{} — LightLine IDE",
-            file,
-            if self.doc().is_dirty() { " *" } else { "" }
-        );
+        let title = format!("{} — LightLine IDE", self.tab_label(self.active));
         unsafe {
             SetWindowTextW(hwnd, wide(&title).as_ptr());
         }
@@ -2254,6 +2269,11 @@ impl App {
         if reloaded.contains(&self.active) {
             self.ensure_lsp(hwnd);
         }
+        if !reloaded.is_empty() {
+            for preview in self.tabs.iter().filter_map(|tab| tab.markdown.as_ref()) {
+                preview.invalidate();
+            }
+        }
         if needs_refresh {
             // A reload (e.g. after Discard) replaces the buffer without going
             // through replace_range, so the gutter has to be recomputed here.
@@ -2480,6 +2500,10 @@ impl App {
         if self.tab().is_placeholder() {
             return false;
         }
+        if self.tab().markdown.is_some() {
+            self.status = "This is a read-only preview; save the Markdown file itself".into();
+            return false;
+        }
         if self.tab().image.is_some() {
             self.status = "This is an image preview; there is nothing to save".into();
             return false;
@@ -2620,6 +2644,7 @@ impl App {
                     self.start_transition(hwnd);
                 }
                 if self.tabs.len() == 1
+                    && !self.tab().read_only()
                     && self.doc().path.is_none()
                     && !self.doc().is_dirty()
                     && self.doc().line(0).is_empty()

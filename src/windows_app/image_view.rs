@@ -49,6 +49,36 @@ pub(super) struct ImageAsset {
     pub(super) height: i32,
 }
 
+impl ImageAsset {
+    /// Draws the whole image scaled into `rect`.
+    pub(super) fn draw(&self, hdc: HDC, rect: RECT) {
+        let (width, height) = (rect.right - rect.left, rect.bottom - rect.top);
+        unsafe {
+            let mem_dc = CreateCompatibleDC(hdc);
+            if mem_dc.is_null() {
+                return;
+            }
+            let old = SelectObject(mem_dc, self.bitmap);
+            SetStretchBltMode(hdc, HALFTONE);
+            StretchBlt(
+                hdc,
+                rect.left,
+                rect.top,
+                width,
+                height,
+                mem_dc,
+                0,
+                0,
+                self.width,
+                self.height,
+                SRCCOPY,
+            );
+            SelectObject(mem_dc, old);
+            DeleteDC(mem_dc);
+        }
+    }
+}
+
 impl Drop for ImageAsset {
     fn drop(&mut self) {
         unsafe {

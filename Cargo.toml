@@ -42,6 +42,7 @@ tiny-skia = "0.12.0"
 toml = "1.1.6"
 ureq = "3.4.2"
 wait-timeout = "0.2.1"
+pulldown-cmark = { version = "0.13", default-features = false }
 
 [profile.release]
 lto = "thin"

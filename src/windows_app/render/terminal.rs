@@ -390,29 +390,29 @@ impl App {
                     *row,
                 );
             } else if is_default {
-                let badge = RECT {
-                    left: row.right - s(88),
-                    top: row.top + s(2),
-                    right: row.right - s(9),
-                    bottom: row.bottom - s(2),
+                let check = RECT {
+                    left: row.right - s(76),
+                    top: row.top + s(5),
+                    right: row.right - s(62),
+                    bottom: row.top + s(19),
                 };
-                self.panel_card(hdc, badge, s(9), rgb(105, 91, 172), rgb(42, 40, 78));
+                Self::rounded_fill(hdc, check, s(4), rgb(24, 104, 105));
                 unsafe {
-                    let pen = CreatePen(PS_SOLID, s(2).max(1), rgb(142, 232, 221));
+                    let pen = CreatePen(PS_SOLID, s(1).max(1), rgb(172, 246, 229));
                     let old_pen = SelectObject(hdc, pen);
-                    MoveToEx(hdc, badge.left + s(8), row.top + s(12), null_mut());
-                    LineTo(hdc, badge.left + s(11), row.top + s(15));
-                    LineTo(hdc, badge.left + s(16), row.top + s(8));
+                    MoveToEx(hdc, check.left + s(3), check.top + s(7), null_mut());
+                    LineTo(hdc, check.left + s(6), check.top + s(10));
+                    LineTo(hdc, check.left + s(11), check.top + s(4));
                     SelectObject(hdc, old_pen);
                     DeleteObject(pen);
                 }
                 Self::label(
                     hdc,
                     "Default",
-                    badge.left + s(22),
+                    check.right + s(6),
                     row.top + s(3),
-                    rgb(221, 216, 249),
-                    badge,
+                    rgb(158, 179, 213),
+                    *row,
                 );
             }
         }

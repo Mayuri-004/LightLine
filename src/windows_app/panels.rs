@@ -89,6 +89,8 @@ impl App {
             ("Debug: Start Debugging", 33),
             ("Debug: Select Configuration", 34),
             ("Python: Install debugpy (for debugging)", 35),
+            ("Markdown: Open Preview", 36),
+            ("Markdown: Open Preview to the Side", 37),
         ]
         .into_iter()
         .filter(|(name, _)| name.to_ascii_lowercase().contains(&query))
@@ -211,6 +213,8 @@ impl App {
                     self.show_debug_config_menu(hwnd, config.left, config.bottom);
                 }
                 Some(35) => self.install_debugpy(hwnd),
+                Some(36) => self.open_markdown_preview(hwnd, false),
+                Some(37) => self.open_markdown_preview(hwnd, true),
                 _ => {}
             }
         } else {

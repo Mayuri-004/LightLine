@@ -347,6 +347,10 @@ impl App {
                 return true;
             }
         }
+        // A Markdown preview has no caret: navigation keys scroll it.
+        if self.tab().markdown.is_some() && !ctrl && self.markdown_key(hwnd, key) {
+            return true;
+        }
         if self.side_view == SideView::Review
             && self.review_file.is_some()
             && !self.panel_focus
@@ -448,6 +452,11 @@ impl App {
                 }
                 x if x == VK_OEM_3 as u32 => {
                     self.toggle_terminal(hwnd);
+                    return true;
+                }
+                // As in VS Code: Ctrl+Shift+V previews the Markdown file.
+                0x56 if shift => {
+                    self.open_markdown_preview(hwnd, false);
                     return true;
                 }
                 x if x == VK_OEM_5 as u32 => {
@@ -1810,6 +1819,10 @@ impl App {
             self.focus_pane(hwnd, pane);
         }
         let pane = self.focused_pane;
+        if self.tabs[self.tab_for_pane(pane)].markdown.is_some() {
+            self.click_markdown(hwnd, pane, x, y);
+            return;
+        }
         if self.tabs[self.tab_for_pane(pane)].is_placeholder() {
             return;
         }

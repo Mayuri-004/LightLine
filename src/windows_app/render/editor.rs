@@ -79,7 +79,7 @@ impl App {
         x: i32,
         y: i32,
     ) {
-        if self.tab().is_placeholder() {
+        if self.tab().is_placeholder() || self.tab().markdown.is_some() {
             return;
         }
         let editor_bottom = (rect.bottom - self.scale(STATUS)).max(0);
@@ -390,9 +390,7 @@ impl App {
                     continue;
                 }
                 let path_part = self.tabs[tab_index]
-                    .document
-                    .path
-                    .as_deref()
+                    .display_path()
                     .and_then(Path::parent)
                     .and_then(Path::file_name)
                     .map(|part| part.to_string_lossy().into_owned())
@@ -477,7 +475,7 @@ impl App {
                     );
                 }
                 let use_theme = self.has_extension("material-icons");
-                match self.tabs[index].document.path.as_deref() {
+                match self.tabs[index].display_path() {
                     Some(path) => {
                         if !self.icons.draw_for_path(
                             hdc,
@@ -1173,7 +1171,7 @@ impl App {
             // labels instead of blending into the plain muted text.
             // With no file open there is no document to describe, so the
             // status message may use the space up to the Ready indicator.
-            let mid_x = if self.tab().is_placeholder() {
+            let mid_x = if self.tab().is_placeholder() || self.tab().markdown.is_some() {
                 ready_x
             } else {
                 let (mid_x, clip_right, prefix, language_rect) = self.status_language_control(

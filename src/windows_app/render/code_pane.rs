@@ -64,6 +64,19 @@ impl App {
             );
             return;
         }
+        if let Some(preview) = &self.tabs[self.tab_for_pane(pane)].markdown {
+            self.paint_markdown_pane(
+                hdc,
+                preview,
+                RECT {
+                    left,
+                    top: self.editor_top(),
+                    right,
+                    bottom,
+                },
+            );
+            return;
+        }
         if self.tabs[self.tab_for_pane(pane)].is_placeholder() {
             self.paint_empty_pane(
                 hdc,

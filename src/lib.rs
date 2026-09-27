@@ -7,6 +7,7 @@ pub mod extensions;
 pub mod formatter;
 pub mod icon_theme;
 pub mod lsp;
+pub mod markdown;
 pub mod settings;
 pub mod syntax;
 pub mod terminal;

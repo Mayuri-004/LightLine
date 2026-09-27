@@ -5,6 +5,8 @@ mod dialog;
 mod file_dialog;
 mod git;
 mod image_view;
+mod markdown_view;
+use markdown_view::{MARKDOWN_TIMER, MarkdownPreview};
 mod panels;
 mod session;
 mod terminal;
