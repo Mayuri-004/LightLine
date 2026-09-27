@@ -71,6 +71,7 @@ const CARDS: [(&str, &str, WelcomeAction); 4] = [
 ];
 
 // (gradient top, gradient bottom, icon badge) per card.
+// As designed for the default theme; used through `themed`.
 const CARD_COLORS: [(u32, u32, u32); 4] = [
     (rgb(54, 38, 128), rgb(30, 26, 74), rgb(124, 92, 246)),
     (rgb(26, 58, 140), rgb(17, 34, 84), rgb(59, 130, 246)),
@@ -353,7 +354,7 @@ impl App {
                 bottom: s(35),
             },
             s(5),
-            rgb(63, 47, 150),
+            ui(63, 47, 150),
         );
         unsafe { SelectObject(hdc, self.ui_font) };
         Self::label(
@@ -372,7 +373,7 @@ impl App {
 
         let command = self.command_center_rect(hwnd);
         if command.right > command.left {
-            self.panel_card(hdc, command, s(6), rgb(43, 76, 132), rgb(12, 25, 48));
+            self.panel_card(hdc, command, s(6), ui(43, 76, 132), ui(12, 25, 48));
             self.rail_icon(
                 hdc,
                 1,
@@ -399,7 +400,7 @@ impl App {
                 right: command.right - s(7),
                 bottom: command.bottom - s(4),
             };
-            Self::rounded_fill(hdc, key, s(4), rgb(25, 43, 76));
+            Self::rounded_fill(hdc, key, s(4), ui(25, 43, 76));
             Self::label(
                 hdc,
                 "Ctrl P",
@@ -459,7 +460,7 @@ impl App {
             right: layout.rail_right - s(7),
             bottom: first_top + s(42),
         };
-        self.panel_card(hdc, welcome_row, s(7), rgb(50, 84, 154), rgb(18, 35, 72));
+        self.panel_card(hdc, welcome_row, s(7), ui(50, 84, 154), ui(18, 35, 72));
         Self::fill(
             hdc,
             RECT {
@@ -475,7 +476,7 @@ impl App {
             s(19),
             welcome_row.top + s(11),
             s(20),
-            rgb(240, 245, 255),
+            label_on(ui(18, 35, 72), 240, 245, 255),
         );
 
         for (index, (_, icon, _)) in NAV_ITEMS.iter().enumerate() {
@@ -557,7 +558,7 @@ impl App {
                 bottom: logo_top + s(42),
             },
             s(7),
-            rgb(78, 56, 176),
+            ui(78, 56, 176),
         );
         unsafe { SelectObject(hdc, self.title_font) };
         self.label_mid(
@@ -600,8 +601,10 @@ impl App {
         for (index, bounds) in layout.cards.iter().enumerate() {
             let (title, subtitle, _) = CARDS[index];
             let (top_color, bottom_color, badge_color) = CARD_COLORS[index];
+            let (top_color, bottom_color, badge_color) =
+                (themed(top_color), themed(bottom_color), themed(badge_color));
             self.gradient_card(hdc, *bounds, s(12), top_color, bottom_color);
-            self.card_outline(hdc, *bounds, s(12), WELCOME_CARD_EDGE);
+            self.card_outline(hdc, *bounds, s(12), themed(WELCOME_CARD_EDGE));
             Self::rounded_fill(
                 hdc,
                 RECT {
@@ -691,7 +694,7 @@ impl App {
                 subtitle,
                 bounds.left + s(16),
                 bounds.top + s(94),
-                rgb(186, 200, 230),
+                ui(186, 200, 230),
                 clip,
             );
             Self::label(
@@ -708,7 +711,13 @@ impl App {
     fn paint_welcome_recent(&self, hdc: HDC, layout: &WelcomeLayout) {
         let s = |value: i32| self.scale(value);
         let panel = layout.recent_panel;
-        self.panel_card(hdc, panel, s(12), WELCOME_CARD_EDGE, CARD_BG);
+        self.panel_card(
+            hdc,
+            panel,
+            s(12),
+            themed(WELCOME_CARD_EDGE),
+            themed(CARD_BG),
+        );
         let clip = RECT {
             left: panel.left + s(14),
             top: panel.top,
@@ -801,7 +810,13 @@ impl App {
     fn paint_welcome_quick(&self, hdc: HDC, layout: &WelcomeLayout) {
         let s = |value: i32| self.scale(value);
         let panel = layout.quick_panel;
-        self.panel_card(hdc, panel, s(12), WELCOME_CARD_EDGE, CARD_BG);
+        self.panel_card(
+            hdc,
+            panel,
+            s(12),
+            themed(WELCOME_CARD_EDGE),
+            themed(CARD_BG),
+        );
         let clip = RECT {
             left: panel.left + s(14),
             top: panel.top,
@@ -835,7 +850,7 @@ impl App {
                 right: panel.right - s(14),
                 bottom: middle + s(11),
             };
-            Self::rounded_fill(hdc, chip, s(5), CHIP_BG);
+            Self::rounded_fill(hdc, chip, s(5), themed(CHIP_BG));
             self.label_mid(
                 hdc,
                 shortcut,
@@ -912,7 +927,13 @@ impl App {
         let Some(panel) = layout.steps_panel else {
             return;
         };
-        self.panel_card(hdc, panel, s(12), WELCOME_CARD_EDGE, CARD_BG);
+        self.panel_card(
+            hdc,
+            panel,
+            s(12),
+            themed(WELCOME_CARD_EDGE),
+            themed(CARD_BG),
+        );
         let clip = RECT {
             left: panel.left + s(14),
             top: panel.top,
@@ -925,7 +946,7 @@ impl App {
             panel.left + s(16),
             panel.top + s(16),
             s(18),
-            rgb(245, 205, 110),
+            ui(245, 205, 110),
         );
         self.label_mid(
             hdc,
@@ -987,7 +1008,7 @@ impl App {
         let Some(community) = layout.community else {
             return;
         };
-        self.gradient_card(hdc, community, s(12), rgb(46, 40, 132), rgb(28, 30, 78));
+        self.gradient_card(hdc, community, s(12), ui(46, 40, 132), ui(28, 30, 78));
         let clip = RECT {
             left: community.left + s(16),
             top: community.top,
@@ -1000,7 +1021,7 @@ impl App {
             right: community.left + s(64),
             bottom: community.top + s(68),
         };
-        Self::rounded_fill(hdc, badge, s(10), rgb(96, 82, 220));
+        Self::rounded_fill(hdc, badge, s(10), ui(96, 82, 220));
         self.rail_icon(
             hdc,
             2,
@@ -1023,7 +1044,7 @@ impl App {
             "Report issues, request features",
             community.left + s(78),
             community.top + s(46),
-            rgb(186, 200, 230),
+            ui(186, 200, 230),
             clip,
         );
         if community.bottom - community.top >= s(150) {
@@ -1033,7 +1054,7 @@ impl App {
                 right: community.right - s(18),
                 bottom: community.bottom - s(18),
             };
-            self.panel_card(hdc, button, s(7), rgb(82, 74, 210), rgb(38, 45, 116));
+            self.panel_card(hdc, button, s(7), ui(82, 74, 210), ui(38, 45, 116));
             let label = "Open Community  ↗";
             unsafe { SelectObject(hdc, self.ui_font) };
             let label_width = self.text_width(hdc, label);
@@ -1051,7 +1072,7 @@ impl App {
             "and read the source.",
             community.left + s(78),
             community.top + s(66),
-            rgb(186, 200, 230),
+            ui(186, 200, 230),
             clip,
         );
     }

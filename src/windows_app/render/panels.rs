@@ -25,7 +25,7 @@ impl App {
                     right: self.scale(RAIL - 7),
                     bottom: top + self.scale(42),
                 };
-                self.panel_card(hdc, pill, self.scale(7), rgb(50, 84, 154), rgb(18, 35, 72));
+                self.panel_card(hdc, pill, self.scale(7), ui(50, 84, 154), ui(18, 35, 72));
                 Self::fill(
                     hdc,
                     RECT {
@@ -38,7 +38,7 @@ impl App {
                 );
             }
             let color = if is_selected {
-                rgb(240, 245, 255)
+                label_on(ui(18, 35, 72), 240, 245, 255)
             } else {
                 self.theme.muted
             };
@@ -47,11 +47,7 @@ impl App {
                 index,
                 self.scale(19),
                 top + self.scale(11),
-                if is_selected {
-                    rgb(56, 189, 248)
-                } else {
-                    color
-                },
+                if is_selected { ui(56, 189, 248) } else { color },
             );
         }
         let name = "";
@@ -342,7 +338,7 @@ impl App {
                         right: mid,
                         bottom: (y + self.line_height).min(bottom),
                     },
-                    rgb(47, 31, 42),
+                    ui(47, 31, 42),
                 );
             }
             if row.changed && row.after_number.is_some() {
@@ -354,7 +350,7 @@ impl App {
                         right,
                         bottom: (y + self.line_height).min(bottom),
                     },
-                    rgb(24, 55, 50),
+                    ui(24, 55, 50),
                 );
             }
             if let Some(number) = row.before_number {
@@ -771,23 +767,23 @@ impl App {
         let has_session = self.debug.is_some();
         let running = has_session && state.running;
 
-        let disabled = rgb(70, 84, 112);
+        let disabled = ui(70, 84, 112);
         let buttons = [
-            (if running { 3 } else { 0 }, rgb(34, 197, 94), true),
-            (1, rgb(56, 189, 248), has_session),
-            (2, rgb(56, 189, 248), has_session),
-            (4, rgb(220, 60, 60), has_session),
+            (if running { 3 } else { 0 }, ui(34, 197, 94), true),
+            (1, ui(56, 189, 248), has_session),
+            (2, ui(56, 189, 248), has_session),
+            (4, ui(220, 60, 60), has_session),
         ];
         for (index, (icon, color, enabled)) in buttons.iter().enumerate() {
             let rect = self.debug_toolbar_button(left, right, index as i32);
             let active_color = if *enabled { *color } else { disabled };
-            self.panel_card(hdc, rect, s(5), active_color, rgb(16, 24, 44));
+            self.panel_card(hdc, rect, s(5), active_color, ui(16, 24, 44));
             self.debug_icon(
                 hdc,
                 rect,
                 *icon,
                 if *enabled {
-                    rgb(255, 255, 255)
+                    label_on(ui(16, 24, 44), 255, 255, 255)
                 } else {
                     disabled
                 },
@@ -799,11 +795,11 @@ impl App {
             || state.status.contains("not found")
             || state.status.contains("error")
         {
-            (rgb(220, 60, 60), rgb(240, 180, 180))
+            (ui(220, 60, 60), ui(240, 180, 180))
         } else if running {
-            (rgb(34, 197, 94), rgb(200, 220, 245))
+            (ui(34, 197, 94), ui(200, 220, 245))
         } else if has_session {
-            (rgb(250, 204, 21), rgb(200, 220, 245))
+            (ui(250, 204, 21), ui(200, 220, 245))
         } else {
             (self.theme.muted, self.theme.muted)
         };
@@ -847,7 +843,7 @@ impl App {
             "▼ VARIABLES",
             left + s(8),
             y + s(3),
-            rgb(80, 160, 220),
+            ui(80, 160, 220),
             clip,
         );
         y += s(24);
@@ -897,7 +893,7 @@ impl App {
                     &row.name,
                     left + s(20) + indent,
                     row.y,
-                    rgb(205, 220, 245),
+                    ui(205, 220, 245),
                     RECT {
                         left,
                         top: clip.top,
@@ -910,7 +906,7 @@ impl App {
                     &row.value,
                     right - s(92),
                     row.y,
-                    rgb(130, 150, 180),
+                    ui(130, 150, 180),
                     RECT {
                         left,
                         top: clip.top,
@@ -940,7 +936,7 @@ impl App {
                 "▼ CALL STACK",
                 left + s(8),
                 y + s(3),
-                rgb(80, 160, 220),
+                ui(80, 160, 220),
                 clip,
             );
             y += s(24);
@@ -994,7 +990,7 @@ impl App {
                 "▼ BREAKPOINTS",
                 left + s(8),
                 y + s(3),
-                rgb(80, 160, 220),
+                ui(80, 160, 220),
                 clip,
             );
             y += s(24);
@@ -1028,7 +1024,7 @@ impl App {
                     break;
                 }
                 unsafe {
-                    let brush = CreateSolidBrush(rgb(220, 60, 60));
+                    let brush = CreateSolidBrush(ui(220, 60, 60));
                     let old_brush = SelectObject(hdc, brush);
                     let old_pen = SelectObject(hdc, GetStockObject(NULL_PEN));
                     Ellipse(hdc, left + s(8), y + s(4), left + s(8) + s(8), y + s(12));
@@ -1077,7 +1073,7 @@ impl App {
         let paused = self.debug_paused();
 
         let config = self.debug_config_rect(left, right);
-        self.panel_card(hdc, config, s(6), rgb(52, 78, 119), rgb(12, 23, 42));
+        self.panel_card(hdc, config, s(6), ui(52, 78, 119), ui(12, 23, 42));
         // A session shows what it launched; otherwise what F5 would launch now.
         let shown_config = if has_session || self.debug_pending_root.is_some() {
             state.config
@@ -1113,14 +1109,14 @@ impl App {
             start,
             s(5),
             if has_session {
-                rgb(38, 55, 79)
+                ui(38, 55, 79)
             } else {
-                rgb(34, 197, 94)
+                ui(34, 197, 94)
             },
             if has_session {
-                rgb(16, 25, 43)
+                ui(16, 25, 43)
             } else {
-                rgb(13, 57, 46)
+                ui(13, 57, 46)
             },
         );
         self.debug_icon(
@@ -1128,9 +1124,9 @@ impl App {
             start,
             0,
             if has_session {
-                rgb(66, 82, 110)
+                ui(66, 82, 110)
             } else {
-                rgb(245, 255, 250)
+                label_on(ui(13, 57, 46), 245, 255, 250)
             },
         );
 
@@ -1147,18 +1143,18 @@ impl App {
                     rect,
                     s(5),
                     if enabled {
-                        rgb(48, 78, 126)
+                        ui(48, 78, 126)
                     } else {
-                        rgb(31, 43, 67)
+                        ui(31, 43, 67)
                     },
-                    rgb(15, 24, 43),
+                    ui(15, 24, 43),
                 );
                 let color = if !enabled {
-                    rgb(66, 82, 110)
+                    ui(66, 82, 110)
                 } else if index == 5 {
-                    rgb(245, 92, 92)
+                    ui(245, 92, 92)
                 } else {
-                    rgb(170, 202, 250)
+                    ui(170, 202, 250)
                 };
                 self.debug_control_icon(hdc, rect, index, running, color);
             }
@@ -1171,7 +1167,7 @@ impl App {
             right: right - s(8),
             bottom: status_top + s(58),
         };
-        self.panel_card(hdc, status_rect, s(7), rgb(35, 55, 86), rgb(12, 24, 44));
+        self.panel_card(hdc, status_rect, s(7), ui(35, 55, 86), ui(12, 24, 44));
         let failed = state.status.starts_with("Build failed")
             || state.status.starts_with("Could not")
             || state.status.contains("not found")
@@ -1179,9 +1175,9 @@ impl App {
             || state.status.contains("closed its output")
             || state.status.contains("error");
         let dot_color = if failed {
-            rgb(220, 60, 60)
+            ui(220, 60, 60)
         } else if running || paused {
-            rgb(49, 211, 118)
+            ui(49, 211, 118)
         } else {
             self.theme.muted
         };
@@ -1309,7 +1305,7 @@ impl App {
                 right: right - s(8),
                 bottom: *y + s(26),
             };
-            self.panel_card(hdc, header, s(5), rgb(31, 51, 82), rgb(13, 26, 47));
+            self.panel_card(hdc, header, s(5), ui(31, 51, 82), ui(13, 26, 47));
             Self::fill(
                 hdc,
                 RECT {
@@ -1318,7 +1314,7 @@ impl App {
                     right: header.left + s(2),
                     bottom: header.bottom - s(5),
                 },
-                rgb(56, 189, 248),
+                ui(56, 189, 248),
             );
             Self::label(
                 hdc,
@@ -1329,24 +1325,17 @@ impl App {
                 },
                 left + s(17),
                 *y + s(5),
-                rgb(105, 180, 235),
+                ui(105, 180, 235),
                 clip,
             );
-            Self::label(
-                hdc,
-                title,
-                left + s(33),
-                *y + s(5),
-                rgb(190, 208, 232),
-                clip,
-            );
+            Self::label(hdc, title, left + s(33), *y + s(5), ui(190, 208, 232), clip);
             let badge = RECT {
                 left: right - s(40),
                 top: *y + s(5),
                 right: right - s(14),
                 bottom: *y + s(23),
             };
-            self.panel_card(hdc, badge, s(9), rgb(45, 68, 105), rgb(20, 36, 62));
+            self.panel_card(hdc, badge, s(9), ui(45, 68, 105), ui(20, 36, 62));
             let count_text = count.to_string();
             let count_width = self.text_width(hdc, &count_text);
             Self::label(
@@ -1354,7 +1343,7 @@ impl App {
                 &count_text,
                 badge.left + (badge.right - badge.left - count_width) / 2,
                 *y + s(5),
-                rgb(205, 220, 245),
+                ui(205, 220, 245),
                 clip,
             );
         }
@@ -1417,7 +1406,7 @@ impl App {
                         right: right - s(8),
                         bottom: row.y + s(23),
                     },
-                    rgb(27, 40, 64),
+                    ui(27, 40, 64),
                 );
                 Self::label(
                     hdc,
@@ -1432,7 +1421,7 @@ impl App {
                     &row.name,
                     left + s(27) + indent,
                     row.y + s(2),
-                    rgb(205, 220, 245),
+                    ui(205, 220, 245),
                     RECT {
                         left,
                         top: clip.top,
@@ -1446,9 +1435,9 @@ impl App {
                     right - s(126),
                     row.y + s(2),
                     if row.value.starts_with('"') {
-                        rgb(230, 155, 90)
+                        ui(230, 155, 90)
                     } else {
-                        rgb(65, 205, 220)
+                        ui(65, 205, 220)
                     },
                     RECT {
                         left,
@@ -1486,8 +1475,8 @@ impl App {
                             bottom: y + s(22),
                         },
                         s(3),
-                        rgb(39, 91, 160),
-                        rgb(22, 57, 108),
+                        ui(39, 91, 160),
+                        ui(22, 57, 108),
                     );
                 }
                 let location = frame
@@ -1561,19 +1550,19 @@ impl App {
                         bottom: y + s(19),
                     },
                     s(3),
-                    rgb(45, 115, 196),
-                    rgb(32, 116, 210),
+                    ui(45, 115, 196),
+                    ui(32, 116, 210),
                 );
                 Self::label(
                     hdc,
                     "\u{2713}",
                     left + s(13),
                     y + s(1),
-                    rgb(245, 250, 255),
+                    label_on(ui(32, 116, 210), 245, 250, 255),
                     clip,
                 );
                 unsafe {
-                    let brush = CreateSolidBrush(rgb(245, 82, 82));
+                    let brush = CreateSolidBrush(ui(245, 82, 82));
                     let old_brush = SelectObject(hdc, brush);
                     let old_pen = SelectObject(hdc, GetStockObject(NULL_PEN));
                     Ellipse(hdc, left + s(35), y + s(7), left + s(44), y + s(16));
@@ -1619,9 +1608,9 @@ impl App {
                 bottom: menu.bottom + s(4),
             },
             s(7),
-            rgb(5, 11, 22),
+            ui(5, 11, 22),
         );
-        self.panel_card(hdc, menu, s(7), rgb(55, 79, 118), rgb(13, 24, 43));
+        self.panel_card(hdc, menu, s(7), ui(55, 79, 118), ui(13, 24, 43));
 
         let automatic_detail = match self.auto_debug_config() {
             Some(DebugConfig::RustWorkspace) => "Follows editor  \u{00b7}  Rust workspace",
@@ -1655,7 +1644,7 @@ impl App {
                         bottom: top + row_height,
                     },
                     s(5),
-                    rgb(22, 49, 82),
+                    ui(22, 49, 82),
                 );
                 Self::fill(
                     hdc,
@@ -1665,7 +1654,7 @@ impl App {
                         right: menu.left + s(7),
                         bottom: top + row_height - s(8),
                     },
-                    rgb(56, 189, 248),
+                    ui(56, 189, 248),
                 );
             }
             Self::label(
@@ -1673,7 +1662,7 @@ impl App {
                 if *selected { "\u{2713}" } else { "" },
                 menu.left + s(14),
                 top + s(4),
-                rgb(110, 211, 250),
+                ui(110, 211, 250),
                 clip,
             );
             Self::label(
@@ -1682,9 +1671,9 @@ impl App {
                 menu.left + s(36),
                 top + s(3),
                 if *selected {
-                    rgb(244, 248, 255)
+                    label_on(ui(22, 49, 82), 244, 248, 255)
                 } else {
-                    rgb(208, 220, 239)
+                    ui(208, 220, 239)
                 },
                 clip,
             );
@@ -1693,7 +1682,7 @@ impl App {
                 detail,
                 menu.left + s(36),
                 top + s(22),
-                rgb(123, 146, 180),
+                ui(123, 146, 180),
                 clip,
             );
         }
@@ -1718,19 +1707,19 @@ impl App {
             bottom: s(76),
         };
         let search_border = if self.extensions_search_active {
-            rgb(56, 189, 248)
+            ui(56, 189, 248)
         } else {
-            rgb(35, 48, 76)
+            ui(35, 48, 76)
         };
-        self.panel_card(hdc, search_rect, s(5), search_border, rgb(13, 20, 36));
+        self.panel_card(hdc, search_rect, s(5), search_border, ui(13, 20, 36));
 
         // Vector magnifying glass icon
         let icon_cx = search_rect.left + s(14);
         let icon_cy = (search_rect.top + search_rect.bottom) / 2;
         let icon_color = if self.extensions_search_active {
-            rgb(56, 189, 248)
+            ui(56, 189, 248)
         } else {
-            rgb(100, 116, 145)
+            ui(100, 116, 145)
         };
         self.stroke(hdc, icon_color, |hdc| unsafe {
             Ellipse(
@@ -1757,7 +1746,7 @@ impl App {
         if self.extensions_query.is_empty() {
             if self.extensions_search_active {
                 if self.caret_on {
-                    Self::label(hdc, "|", text_x, text_y, rgb(56, 189, 248), text_clip);
+                    Self::label(hdc, "|", text_x, text_y, ui(56, 189, 248), text_clip);
                 }
             } else {
                 Self::label(
@@ -1765,7 +1754,7 @@ impl App {
                     "Search Extensions...",
                     text_x,
                     text_y,
-                    rgb(95, 110, 140),
+                    ui(95, 110, 140),
                     text_clip,
                 );
             }
@@ -1779,12 +1768,12 @@ impl App {
 
             // Clear "×" button
             let clear_x = search_rect.right - s(18);
-            Self::label(hdc, "×", clear_x, text_y, rgb(148, 163, 184), search_rect);
+            Self::label(hdc, "×", clear_x, text_y, ui(148, 163, 184), search_rect);
         }
 
         // Funnel filter icon on the right if query is empty
         if self.extensions_query.is_empty() {
-            self.stroke(hdc, rgb(95, 110, 140), |hdc| unsafe {
+            self.stroke(hdc, ui(95, 110, 140), |hdc| unsafe {
                 let fx = search_rect.right - s(18);
                 let fy = search_rect.top + s(9);
                 MoveToEx(hdc, fx, fy, null_mut());
@@ -1803,7 +1792,7 @@ impl App {
             right: right - s(8),
             bottom: s(110),
         };
-        self.panel_card(hdc, tabs_rect, s(5), rgb(28, 40, 68), rgb(13, 20, 36));
+        self.panel_card(hdc, tabs_rect, s(5), ui(28, 40, 68), ui(13, 20, 36));
 
         let half_w = (tabs_rect.right - tabs_rect.left) / 2;
         let mkt_rect = RECT {
@@ -1823,7 +1812,7 @@ impl App {
         let inst_label = format!("Installed ({installed_count})");
 
         if self.extensions_tab == ExtensionsTab::Marketplace {
-            self.panel_card(hdc, mkt_rect, s(4), rgb(56, 189, 248), rgb(30, 50, 88));
+            self.panel_card(hdc, mkt_rect, s(4), ui(56, 189, 248), ui(30, 50, 88));
             let mkt_w = self.text_width(hdc, "Marketplace");
             let mkt_x = mkt_rect.left + ((mkt_rect.right - mkt_rect.left) - mkt_w) / 2;
             Self::label(
@@ -1831,7 +1820,7 @@ impl App {
                 "Marketplace",
                 mkt_x,
                 (mkt_rect.top + mkt_rect.bottom) / 2 - self.text_height(hdc) / 2,
-                rgb(255, 255, 255),
+                label_on(ui(30, 50, 88), 255, 255, 255),
                 mkt_rect,
             );
 
@@ -1842,7 +1831,7 @@ impl App {
                 &inst_label,
                 inst_x,
                 (inst_rect.top + inst_rect.bottom) / 2 - self.text_height(hdc) / 2,
-                rgb(148, 163, 184),
+                ui(148, 163, 184),
                 inst_rect,
             );
         } else {
@@ -1853,11 +1842,11 @@ impl App {
                 "Marketplace",
                 mkt_x,
                 (mkt_rect.top + mkt_rect.bottom) / 2 - self.text_height(hdc) / 2,
-                rgb(148, 163, 184),
+                ui(148, 163, 184),
                 mkt_rect,
             );
 
-            self.panel_card(hdc, inst_rect, s(4), rgb(56, 189, 248), rgb(30, 50, 88));
+            self.panel_card(hdc, inst_rect, s(4), ui(56, 189, 248), ui(30, 50, 88));
             let inst_w = self.text_width(hdc, &inst_label);
             let inst_x = inst_rect.left + ((inst_rect.right - inst_rect.left) - inst_w) / 2;
             Self::label(
@@ -1865,7 +1854,7 @@ impl App {
                 &inst_label,
                 inst_x,
                 (inst_rect.top + inst_rect.bottom) / 2 - self.text_height(hdc) / 2,
-                rgb(255, 255, 255),
+                label_on(ui(30, 50, 88), 255, 255, 255),
                 inst_rect,
             );
         }
@@ -1884,7 +1873,7 @@ impl App {
             &sec_text,
             left + s(12),
             section_y,
-            rgb(110, 130, 160),
+            ui(110, 130, 160),
             clip,
         );
         let sec_w = self.text_width(hdc, &sec_text);
@@ -1896,7 +1885,7 @@ impl App {
                 right: right - s(8),
                 bottom: section_y + s(9),
             },
-            rgb(28, 40, 68),
+            ui(28, 40, 68),
         );
 
         // 4. Extensions List
@@ -1948,7 +1937,7 @@ impl App {
                 right: right - s(8),
                 bottom: ey + card_h,
             };
-            self.panel_card(hdc, card_rect, s(6), rgb(32, 46, 76), rgb(15, 23, 42));
+            self.panel_card(hdc, card_rect, s(6), ui(32, 46, 76), ui(15, 23, 42));
 
             // Left Icon Badge (40x40 rounded badge with brand styling)
             let icon_rect = RECT {
@@ -1959,8 +1948,8 @@ impl App {
             };
 
             if ext.id == "prettier" {
-                Self::rounded_fill(hdc, icon_rect, s(6), rgb(22, 28, 44));
-                self.card_outline(hdc, icon_rect, s(6), rgb(48, 64, 98));
+                Self::rounded_fill(hdc, icon_rect, s(6), ui(22, 28, 44));
+                self.card_outline(hdc, icon_rect, s(6), ui(48, 64, 98));
 
                 // Authentic Prettier 4-Color Stripes
                 let stripe_y = icon_rect.bottom - s(8);
@@ -1975,7 +1964,7 @@ impl App {
                         right: sx0 + sw,
                         bottom: stripe_y + stripe_h,
                     },
-                    rgb(86, 182, 240),
+                    ui(86, 182, 240),
                 );
                 Self::fill(
                     hdc,
@@ -1985,7 +1974,7 @@ impl App {
                         right: sx0 + sw * 2 + s(1),
                         bottom: stripe_y + stripe_h,
                     },
-                    rgb(236, 72, 153),
+                    ui(236, 72, 153),
                 );
                 Self::fill(
                     hdc,
@@ -1995,7 +1984,7 @@ impl App {
                         right: sx0 + sw * 3 + s(2),
                         bottom: stripe_y + stripe_h,
                     },
-                    rgb(245, 197, 24),
+                    ui(245, 197, 24),
                 );
                 Self::fill(
                     hdc,
@@ -2005,7 +1994,7 @@ impl App {
                         right: sx0 + sw * 4 + s(3),
                         bottom: stripe_y + stripe_h,
                     },
-                    rgb(168, 85, 247),
+                    ui(168, 85, 247),
                 );
 
                 // Curly code braces
@@ -2017,15 +2006,15 @@ impl App {
                     "{ }",
                     icon_rect.left + s(9),
                     (icon_rect.top + icon_rect.bottom) / 2 - s(4),
-                    rgb(255, 255, 255),
+                    label_on(ui(22, 28, 44), 255, 255, 255),
                     icon_rect,
                 );
                 unsafe {
                     SelectObject(hdc, self.ui_font);
                 }
             } else {
-                Self::rounded_fill(hdc, icon_rect, s(6), rgb(14, 28, 54));
-                self.card_outline(hdc, icon_rect, s(6), rgb(35, 70, 125));
+                Self::rounded_fill(hdc, icon_rect, s(6), ui(14, 28, 54));
+                self.card_outline(hdc, icon_rect, s(6), ui(35, 70, 125));
                 if !self.icons.draw_generic(
                     hdc,
                     GenericIcon::FolderSrc,
@@ -2056,7 +2045,7 @@ impl App {
                 display_title,
                 content_left,
                 ey + s(6),
-                rgb(245, 247, 250),
+                ink(245, 247, 250),
                 card_rect,
             );
             let title_w = self.text_width(hdc, display_title);
@@ -2074,14 +2063,14 @@ impl App {
                     bottom: ey + s(20),
                 },
                 s(3),
-                rgb(56, 189, 248),
+                ui(56, 189, 248),
             );
             Self::label(
                 hdc,
                 "✓",
                 badge_x + s(2),
                 ey + s(7),
-                rgb(255, 255, 255),
+                label_on(ui(56, 189, 248), 255, 255, 255),
                 card_rect,
             );
 
@@ -2091,7 +2080,7 @@ impl App {
                 &ext.version,
                 ver_x,
                 ey + s(7),
-                rgb(100, 116, 140),
+                ui(100, 116, 140),
                 card_rect,
             );
 
@@ -2107,7 +2096,7 @@ impl App {
                 &ext.description,
                 content_left,
                 ey + s(27),
-                rgb(148, 163, 184),
+                ui(148, 163, 184),
                 desc_clip,
             );
 
@@ -2124,7 +2113,7 @@ impl App {
                 &meta_text,
                 content_left,
                 ey + s(53),
-                rgb(100, 116, 145),
+                ui(100, 116, 145),
                 meta_clip,
             );
 
@@ -2139,7 +2128,7 @@ impl App {
             };
 
             if ext.installing {
-                self.panel_card(hdc, btn_rect, s(4), rgb(56, 189, 248), rgb(18, 38, 72));
+                self.panel_card(hdc, btn_rect, s(4), ui(56, 189, 248), ui(18, 38, 72));
                 let text_w = self.text_width(hdc, "Checking...");
                 let tx = btn_rect.left + ((btn_rect.right - btn_rect.left) - text_w) / 2;
                 self.label_mid(
@@ -2147,11 +2136,11 @@ impl App {
                     "Checking...",
                     tx,
                     (btn_rect.top + btn_rect.bottom) / 2,
-                    rgb(186, 230, 253),
+                    ui(186, 230, 253),
                     btn_rect,
                 );
             } else if ext.installed {
-                self.panel_card(hdc, btn_rect, s(4), rgb(48, 70, 105), rgb(20, 32, 54));
+                self.panel_card(hdc, btn_rect, s(4), ui(48, 70, 105), ui(20, 32, 54));
                 let text_w = self.text_width(hdc, "✓ Installed");
                 let tx = btn_rect.left + ((btn_rect.right - btn_rect.left) - text_w) / 2;
                 self.label_mid(
@@ -2159,11 +2148,11 @@ impl App {
                     "✓ Installed",
                     tx,
                     (btn_rect.top + btn_rect.bottom) / 2,
-                    rgb(148, 195, 245),
+                    ui(148, 195, 245),
                     btn_rect,
                 );
             } else {
-                Self::rounded_fill(hdc, btn_rect, s(4), rgb(14, 99, 156));
+                Self::rounded_fill(hdc, btn_rect, s(4), ui(14, 99, 156));
                 let text_w = self.text_width(hdc, "Install");
                 let tx = btn_rect.left + ((btn_rect.right - btn_rect.left) - text_w) / 2;
                 self.label_mid(
@@ -2171,7 +2160,7 @@ impl App {
                     "Install",
                     tx,
                     (btn_rect.top + btn_rect.bottom) / 2,
-                    rgb(255, 255, 255),
+                    label_on(ui(14, 99, 156), 255, 255, 255),
                     btn_rect,
                 );
             }
@@ -2189,7 +2178,7 @@ impl App {
                 right: right - s(8),
                 bottom: guide_top + guide_h,
             };
-            self.panel_card(hdc, guide_rect, s(6), rgb(28, 42, 68), rgb(12, 18, 34));
+            self.panel_card(hdc, guide_rect, s(6), ui(28, 42, 68), ui(12, 18, 34));
 
             // Header
             Self::label(
@@ -2197,7 +2186,7 @@ impl App {
                 "WORKFLOW CAPABILITIES",
                 guide_rect.left + s(10),
                 guide_rect.top + s(8),
-                rgb(100, 116, 145),
+                ui(100, 116, 145),
                 guide_rect,
             );
             Self::fill(
@@ -2208,7 +2197,7 @@ impl App {
                     right: guide_rect.right - s(10),
                     bottom: guide_rect.top + s(25),
                 },
-                rgb(28, 42, 68),
+                ui(28, 42, 68),
             );
 
             // Row 1: Prettier
@@ -2218,7 +2207,7 @@ impl App {
                 "{ }",
                 guide_rect.left + s(10),
                 r1_y,
-                rgb(56, 189, 248),
+                ui(56, 189, 248),
                 guide_rect,
             );
             Self::label(
@@ -2226,7 +2215,7 @@ impl App {
                 "Prettier Formatting",
                 guide_rect.left + s(30),
                 r1_y,
-                rgb(226, 232, 240),
+                ui(226, 232, 240),
                 guide_rect,
             );
             Self::label(
@@ -2234,7 +2223,7 @@ impl App {
                 "Shift + Alt + F formats active document",
                 guide_rect.left + s(30),
                 r1_y + s(16),
-                rgb(100, 116, 145),
+                ui(100, 116, 145),
                 guide_rect,
             );
 
@@ -2254,7 +2243,7 @@ impl App {
                 "Material Icon Theme",
                 guide_rect.left + s(30),
                 r2_y,
-                rgb(226, 232, 240),
+                ui(226, 232, 240),
                 guide_rect,
             );
             Self::label(
@@ -2262,7 +2251,7 @@ impl App {
                 "Visual themes for 20+ file types and tabs",
                 guide_rect.left + s(30),
                 r2_y + s(16),
-                rgb(100, 116, 145),
+                ui(100, 116, 145),
                 guide_rect,
             );
 
@@ -2273,7 +2262,7 @@ impl App {
                 "⚡",
                 guide_rect.left + s(10),
                 r3_y,
-                rgb(245, 197, 24),
+                ui(245, 197, 24),
                 guide_rect,
             );
             Self::label(
@@ -2281,7 +2270,7 @@ impl App {
                 "Real-Time Node Subprocess",
                 guide_rect.left + s(30),
                 r3_y,
-                rgb(226, 232, 240),
+                ui(226, 232, 240),
                 guide_rect,
             );
             Self::label(
@@ -2289,7 +2278,7 @@ impl App {
                 "Non-blocking background CLI execution",
                 guide_rect.left + s(30),
                 r3_y + s(16),
-                rgb(100, 116, 145),
+                ui(100, 116, 145),
                 guide_rect,
             );
         }
@@ -2309,20 +2298,20 @@ impl App {
             search,
             s(5),
             if self.extensions_search_active {
-                rgb(56, 189, 248)
+                ui(56, 189, 248)
             } else {
-                rgb(42, 62, 96)
+                ui(42, 62, 96)
             },
-            rgb(13, 22, 39),
+            ui(13, 22, 39),
         );
         let mx = search.left + s(15);
         let my = (search.top + search.bottom) / 2;
         self.stroke(
             hdc,
             if self.extensions_search_active {
-                rgb(56, 189, 248)
+                ui(56, 189, 248)
             } else {
-                rgb(103, 132, 176)
+                ui(103, 132, 176)
             },
             |hdc| unsafe {
                 Ellipse(hdc, mx - s(5), my - s(5), mx + s(5), my + s(5));
@@ -2374,7 +2363,7 @@ impl App {
         // Compact funnel icon; search remains the real filtering mechanism.
         if self.extensions_query.is_empty() {
             let fx = search.right - s(20);
-            self.stroke(hdc, rgb(103, 132, 176), |hdc| unsafe {
+            self.stroke(hdc, ui(103, 132, 176), |hdc| unsafe {
                 MoveToEx(hdc, fx - s(5), my - s(5), null_mut());
                 LineTo(hdc, fx + s(5), my - s(5));
                 LineTo(hdc, fx + s(1), my);
@@ -2391,7 +2380,7 @@ impl App {
             right: right - s(8),
             bottom: s(122),
         };
-        self.panel_card(hdc, tabs, s(5), rgb(31, 47, 77), rgb(13, 22, 39));
+        self.panel_card(hdc, tabs, s(5), ui(31, 47, 77), ui(13, 22, 39));
         let half = (tabs.right - tabs.left) / 2;
         let market = RECT {
             left: tabs.left + s(2),
@@ -2410,7 +2399,7 @@ impl App {
         } else {
             installed
         };
-        self.panel_card(hdc, selected, s(4), rgb(56, 189, 248), rgb(27, 57, 103));
+        self.panel_card(hdc, selected, s(4), ui(56, 189, 248), ui(27, 57, 103));
         let tab_label = |app: &App, label: &str, rect: RECT, active: bool| {
             let width = app.text_width(hdc, label);
             Self::label(
@@ -2419,9 +2408,9 @@ impl App {
                 rect.left + (rect.right - rect.left - width) / 2,
                 rect.top + s(5),
                 if active {
-                    rgb(245, 250, 255)
+                    label_on(ui(27, 57, 103), 245, 250, 255)
                 } else {
-                    rgb(154, 174, 207)
+                    ui(154, 174, 207)
                 },
                 rect,
             );
@@ -2459,14 +2448,14 @@ impl App {
                 rect,
                 s(5),
                 if active {
-                    rgb(56, 189, 248)
+                    ui(56, 189, 248)
                 } else {
-                    rgb(35, 50, 78)
+                    ui(35, 50, 78)
                 },
                 if active {
-                    rgb(26, 55, 98)
+                    ui(26, 55, 98)
                 } else {
-                    rgb(15, 24, 43)
+                    ui(15, 24, 43)
                 },
             );
             let label_width = self.text_width(hdc, label);
@@ -2476,9 +2465,9 @@ impl App {
                 rect.left + ((rect.right - rect.left - label_width) / 2).max(s(5)),
                 rect.top + s(4),
                 if active {
-                    rgb(235, 246, 255)
+                    label_on(ui(26, 55, 98), 235, 246, 255)
                 } else {
-                    rgb(151, 171, 204)
+                    ui(151, 171, 204)
                 },
                 RECT {
                     left: rect.left + s(4),
@@ -2502,7 +2491,7 @@ impl App {
             section_name,
             left + s(10),
             section_y,
-            rgb(156, 181, 220),
+            ui(156, 181, 220),
             clip,
         );
         let heading_width = self.text_width(hdc, section_name);
@@ -2516,13 +2505,13 @@ impl App {
             right: badge_right,
             bottom: section_y + s(20),
         };
-        self.panel_card(hdc, badge, s(10), rgb(47, 68, 105), rgb(24, 39, 67));
+        self.panel_card(hdc, badge, s(10), ui(47, 68, 105), ui(24, 39, 67));
         Self::label(
             hdc,
             &count,
             badge.left + s(9),
             section_y,
-            rgb(214, 227, 248),
+            ui(214, 227, 248),
             badge,
         );
 
@@ -2565,7 +2554,7 @@ impl App {
                 right: right - s(8),
                 bottom: y + card_h,
             };
-            self.panel_card(hdc, card, s(6), rgb(39, 59, 94), rgb(13, 24, 43));
+            self.panel_card(hdc, card, s(6), ui(39, 59, 94), ui(13, 24, 43));
             // A restrained top highlight gives each entry the layered card
             // treatment from the visual mockup without increasing density.
             Self::fill(
@@ -2576,7 +2565,7 @@ impl App {
                     right: card.right - s(7),
                     bottom: card.top + s(2),
                 },
-                rgb(27, 45, 73),
+                ui(27, 45, 73),
             );
             let icon = RECT {
                 left: card.left + s(10),
@@ -2586,22 +2575,22 @@ impl App {
             };
             let content_x = icon.right + s(11);
             if ext.id == "prettier" {
-                self.panel_card(hdc, icon, s(6), rgb(47, 63, 96), rgb(22, 29, 47));
+                self.panel_card(hdc, icon, s(6), ui(47, 63, 96), ui(22, 29, 47));
                 unsafe { SelectObject(hdc, self.brand_font) };
                 Self::label(
                     hdc,
                     "{ }",
                     icon.left + s(10),
                     icon.top + s(9),
-                    rgb(248, 250, 255),
+                    label_on(ui(22, 29, 47), 248, 250, 255),
                     icon,
                 );
                 unsafe { SelectObject(hdc, self.ui_font) };
                 let colors = [
-                    rgb(86, 182, 240),
-                    rgb(236, 72, 153),
-                    rgb(245, 197, 24),
-                    rgb(168, 85, 247),
+                    ui(86, 182, 240),
+                    ui(236, 72, 153),
+                    ui(245, 197, 24),
+                    ui(168, 85, 247),
                 ];
                 for (index, color) in colors.iter().enumerate() {
                     Self::fill(
@@ -2616,9 +2605,9 @@ impl App {
                     );
                 }
             } else if ext.id == "dracula" {
-                self.panel_card(hdc, icon, s(6), rgb(70, 55, 112), rgb(30, 24, 55));
+                self.panel_card(hdc, icon, s(6), ui(70, 55, 112), ui(30, 24, 55));
                 unsafe {
-                    let brush = CreateSolidBrush(rgb(167, 109, 242));
+                    let brush = CreateSolidBrush(ui(167, 109, 242));
                     let old_brush = SelectObject(hdc, brush);
                     let old_pen = SelectObject(hdc, GetStockObject(NULL_PEN));
                     Ellipse(
@@ -2633,7 +2622,7 @@ impl App {
                     DeleteObject(brush);
                 }
             } else {
-                self.panel_card(hdc, icon, s(6), rgb(39, 83, 72), rgb(18, 43, 39));
+                self.panel_card(hdc, icon, s(6), ui(39, 83, 72), ui(18, 43, 39));
                 if !self.icons.draw_generic(
                     hdc,
                     GenericIcon::FolderSrc,
@@ -2654,7 +2643,7 @@ impl App {
                 title,
                 content_x,
                 card.top + s(9),
-                rgb(244, 248, 255),
+                ink(244, 248, 255),
                 RECT {
                     left: content_x,
                     top: card.top,
@@ -2668,7 +2657,7 @@ impl App {
                 &ext.version,
                 version_left,
                 card.top + s(9),
-                rgb(130, 151, 184),
+                ui(130, 151, 184),
                 RECT {
                     left: version_left,
                     top: card.top,
@@ -2681,7 +2670,7 @@ impl App {
                 &ext.description,
                 content_x,
                 card.top + s(36),
-                rgb(167, 186, 216),
+                ui(167, 186, 216),
                 RECT {
                     left: content_x,
                     top: card.top,
@@ -2694,7 +2683,7 @@ impl App {
                 &ext.publisher,
                 content_x,
                 card.top + s(62),
-                rgb(111, 137, 177),
+                ui(111, 137, 177),
                 RECT {
                     left: content_x,
                     top: card.top,
@@ -2707,7 +2696,7 @@ impl App {
                 ext.category().label(),
                 content_x,
                 card.top + s(87),
-                rgb(111, 137, 177),
+                ui(111, 137, 177),
                 RECT {
                     left: content_x,
                     top: card.top,
@@ -2736,36 +2725,36 @@ impl App {
                 bottom: card.top + s(106),
             };
             if ext.installing {
-                self.panel_card(hdc, action, s(4), rgb(56, 189, 248), rgb(22, 48, 83));
+                self.panel_card(hdc, action, s(4), ui(56, 189, 248), ui(22, 48, 83));
                 let width = self.text_width(hdc, action_text);
                 Self::label(
                     hdc,
                     action_text,
                     action.left + (action.right - action.left - width) / 2,
                     action.top + s(4),
-                    rgb(190, 228, 250),
+                    ui(190, 228, 250),
                     action,
                 );
             } else if ext.installed {
-                self.panel_card(hdc, action, s(4), rgb(29, 145, 84), rgb(15, 58, 45));
+                self.panel_card(hdc, action, s(4), ui(29, 145, 84), ui(15, 58, 45));
                 let width = self.text_width(hdc, action_text);
                 Self::label(
                     hdc,
                     action_text,
                     action.left + (action.right - action.left - width) / 2,
                     action.top + s(4),
-                    rgb(202, 250, 220),
+                    ui(202, 250, 220),
                     action,
                 );
             } else {
-                Self::rounded_fill(hdc, action, s(4), rgb(15, 116, 177));
+                Self::rounded_fill(hdc, action, s(4), ui(15, 116, 177));
                 let width = self.text_width(hdc, action_text);
                 Self::label(
                     hdc,
                     action_text,
                     action.left + (action.right - action.left - width) / 2,
                     action.top + s(4),
-                    rgb(255, 255, 255),
+                    label_on(ui(15, 116, 177), 255, 255, 255),
                     action,
                 );
             }
@@ -2773,7 +2762,8 @@ impl App {
         }
 
         let capabilities_top = y + s(8);
-        if capabilities_top + s(104) < bottom {
+        self.color_theme_row.set(None);
+        if capabilities_top + s(136) < bottom {
             Self::fill(
                 hdc,
                 RECT {
@@ -2782,14 +2772,14 @@ impl App {
                     right: right - s(8),
                     bottom: capabilities_top + s(1),
                 },
-                rgb(35, 52, 84),
+                ui(35, 52, 84),
             );
             Self::label(
                 hdc,
                 "ACTIVE CAPABILITIES",
                 left + s(10),
                 capabilities_top + s(12),
-                rgb(156, 181, 220),
+                ui(156, 181, 220),
                 clip,
             );
             let prettier_ready = self
@@ -2800,6 +2790,7 @@ impl App {
                 .extensions
                 .iter()
                 .any(|ext| ext.id == "material-icons" && ext.installed);
+            let theme_detail = format!("{} (click to change)", self.color_theme_name());
             let rows = [
                 (
                     "Formatter",
@@ -2817,11 +2808,21 @@ impl App {
                         "Built-in icons active"
                     },
                 ),
+                ("Color Theme", theme_detail.as_str()),
             ];
             for (index, (name, detail)) in rows.iter().enumerate() {
                 let row_y = capabilities_top + s(38 + index as i32 * 32);
+                if *name == "Color Theme" {
+                    // Clicking this row opens the theme picker (input.rs).
+                    self.color_theme_row.set(Some(RECT {
+                        left: left + s(8),
+                        top: row_y - s(6),
+                        right: right - s(8),
+                        bottom: row_y + s(22),
+                    }));
+                }
                 unsafe {
-                    let brush = CreateSolidBrush(rgb(42, 204, 113));
+                    let brush = CreateSolidBrush(ui(42, 204, 113));
                     let old_brush = SelectObject(hdc, brush);
                     let old_pen = SelectObject(hdc, GetStockObject(NULL_PEN));
                     Ellipse(hdc, left + s(12), row_y + s(5), left + s(19), row_y + s(12));

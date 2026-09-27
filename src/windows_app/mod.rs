@@ -31,7 +31,8 @@ pub use window::run;
 mod color_theme_adapter;
 mod icons;
 mod theme;
-use theme::Theme;
+mod theme_picker;
+use theme::{Theme, ink, label_on, themed, ui};
 
 use icons::{AppIcons, DebugGlyph, GenericIcon, IconSet};
 use lightline::clipboard;

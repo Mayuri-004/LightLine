@@ -21,6 +21,10 @@ struct ThemeFile {
 #[derive(Deserialize)]
 struct ThemeVariant {
     #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    appearance: Option<String>,
+    #[serde(default)]
     style: HashMap<String, serde_json::Value>,
 }
 
@@ -35,10 +39,13 @@ struct Player {
     selection: Option<String>,
 }
 
-/// One resolved Zed color theme (its first `themes[]` variant -- real Zed
-/// theme files can define more than one, e.g. a light/dark pair or a high
-/// contrast variant; the first is the theme's primary one).
+/// One variant of a Zed color theme. A theme file can define several (a
+/// light/dark pair, or e.g. Catppuccin's Latte, Frappé, Macchiato and Mocha).
 pub struct ZedColorTheme {
+    /// The variant's display name, e.g. "Dracula" or "Catppuccin Mocha".
+    pub name: String,
+    /// False only for a variant marked `"appearance": "light"`.
+    pub dark: bool,
     // Flat chrome/editor keys, e.g. "editor.background", "border", "error".
     style: HashMap<String, String>,
     // "syntax.<name>.color", e.g. syntax["keyword"] = "#ff79c6ff".
@@ -46,16 +53,46 @@ pub struct ZedColorTheme {
 }
 
 impl ZedColorTheme {
+    /// The variant to use when the extension is installed: its first dark
+    /// one (LightLine's own palette is dark), else its first.
     pub fn load(extension_dir: &Path) -> Option<Self> {
-        let themes_dir = extension_dir.join("themes");
-        let entry = std::fs::read_dir(&themes_dir)
-            .ok()?
-            .filter_map(|entry| entry.ok())
-            .find(|entry| entry.path().extension().and_then(|ext| ext.to_str()) == Some("json"))?;
-        let text = std::fs::read_to_string(entry.path()).ok()?;
-        let file: ThemeFile = serde_json::from_str(&text).ok()?;
-        let variant = file.themes.into_iter().next()?;
+        let mut variants = Self::load_all(extension_dir);
+        let index = variants.iter().position(|theme| theme.dark).unwrap_or(0);
+        (index < variants.len()).then(|| variants.swap_remove(index))
+    }
 
+    /// Every variant of every theme file in the extension's `themes`
+    /// folder, in file-name order.
+    pub fn load_all(extension_dir: &Path) -> Vec<Self> {
+        let Ok(entries) = std::fs::read_dir(extension_dir.join("themes")) else {
+            return Vec::new();
+        };
+        let mut files: Vec<_> = entries
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("json"))
+            .collect();
+        files.sort();
+        files
+            .iter()
+            .filter_map(|path| std::fs::read_to_string(path).ok())
+            .flat_map(|text| Self::parse(&text))
+            .collect()
+    }
+
+    /// The variants in one theme file's text.
+    pub fn parse(text: &str) -> Vec<Self> {
+        let Ok(file) = serde_json::from_str::<ThemeFile>(text) else {
+            return Vec::new();
+        };
+        file.themes.into_iter().map(Self::from_variant).collect()
+    }
+
+    fn from_variant(variant: ThemeVariant) -> Self {
+        let dark = !variant
+            .appearance
+            .as_deref()
+            .is_some_and(|appearance| appearance.eq_ignore_ascii_case("light"));
         let mut style = HashMap::new();
         let mut syntax = HashMap::new();
         for (key, value) in variant.style {
@@ -90,7 +127,12 @@ impl ZedColorTheme {
                 }
             }
         }
-        Some(Self { style, syntax })
+        Self {
+            name: variant.name.unwrap_or_else(|| "Unnamed theme".to_string()),
+            dark,
+            style,
+            syntax,
+        }
     }
 
     /// A flat chrome/editor color by its Zed key (e.g. `"editor.background"`,
@@ -105,6 +147,32 @@ impl ZedColorTheme {
     pub fn syntax_color(&self, name: &str) -> Option<Rgba> {
         self.syntax.get(name).and_then(|hex| parse_rgba(hex))
     }
+}
+
+/// Every color-theme variant installed under `extensions_dir`, with the
+/// id of the extension it comes from.
+pub fn installed(extensions_dir: &Path) -> Vec<(String, ZedColorTheme)> {
+    let Ok(entries) = std::fs::read_dir(extensions_dir) else {
+        return Vec::new();
+    };
+    let mut folders: Vec<_> = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| crate::extensions::zed_manifest::is_color_theme(path))
+        .collect();
+    folders.sort();
+    folders
+        .into_iter()
+        .flat_map(|folder| {
+            let id = folder
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            ZedColorTheme::load_all(&folder)
+                .into_iter()
+                .map(move |theme| (id.clone(), theme))
+        })
+        .collect()
 }
 
 /// A parsed Zed color: 8-hex-digit `#RRGGBBAA` (alpha last, matching every
@@ -149,6 +217,35 @@ mod tests {
                 .join("dracula")
         })?;
         ZedColorTheme::load(&dir)
+    }
+
+    #[test]
+    fn reads_every_variant_and_prefers_a_dark_one() {
+        let text = r##"{"name": "Pair", "themes": [
+            {"name": "Pair Light", "appearance": "light", "style": {"editor.background": "#ffffff"}},
+            {"name": "Pair Dark", "appearance": "dark", "style": {"editor.background": "#101010",
+              "syntax": {"keyword": {"color": "#ff0000"}}}}
+        ]}"##;
+        let variants = ZedColorTheme::parse(text);
+        assert_eq!(variants.len(), 2);
+        assert_eq!(variants[0].name, "Pair Light");
+        assert!(!variants[0].dark);
+        assert!(variants[1].dark);
+        assert_eq!(
+            variants[1].syntax_color("keyword"),
+            Some(Rgba {
+                r: 0xff,
+                g: 0,
+                b: 0,
+                a: 0xff
+            })
+        );
+        let dir = std::env::temp_dir().join(format!("lightline-theme-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("themes")).unwrap();
+        std::fs::write(dir.join("themes").join("pair.json"), text).unwrap();
+        assert_eq!(ZedColorTheme::load(&dir).unwrap().name, "Pair Dark");
+        assert_eq!(ZedColorTheme::load_all(&dir).len(), 2);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

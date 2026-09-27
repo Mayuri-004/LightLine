@@ -128,7 +128,7 @@ impl App {
             },
             self.scale(4),
             self.theme.card_edge,
-            rgb(15, 28, 49),
+            ui(15, 28, 49),
         );
         Self::label(
             hdc,
@@ -154,7 +154,7 @@ impl App {
             if shell_open {
                 self.theme.muted
             } else {
-                rgb(74, 80, 94)
+                ui(74, 80, 94)
             },
             layout.kill,
         );
@@ -241,8 +241,12 @@ impl App {
                 .iter()
                 .enumerate()
                 .map(|(column, cell)| {
-                    let (foreground, background) =
-                        cell_colors(cell, self.theme.text, self.theme.sidebar_bg);
+                    let (foreground, background) = cell_colors(
+                        cell,
+                        self.theme.text,
+                        self.theme.sidebar_bg,
+                        &self.theme.ansi,
+                    );
                     if cell_selected(row_index, column) {
                         (foreground, self.theme.select_bg)
                     } else {
@@ -299,7 +303,7 @@ impl App {
                         right: x + cell_width,
                         bottom: y + cell_height,
                     },
-                    CURSOR_BG,
+                    themed(CURSOR_BG),
                 );
             }
         }
@@ -324,9 +328,9 @@ impl App {
                 bottom: menu.bottom + s(5),
             },
             s(7),
-            rgb(4, 9, 18),
+            ui(4, 9, 18),
         );
-        self.panel_card(hdc, menu, s(7), rgb(47, 73, 112), rgb(13, 25, 45));
+        self.panel_card(hdc, menu, s(7), ui(47, 73, 112), ui(13, 25, 45));
         let title = if self.terminal_profile_defaults_open {
             "SELECT DEFAULT PROFILE"
         } else {
@@ -337,7 +341,7 @@ impl App {
             title,
             menu.left + s(12),
             menu.top + s(3),
-            rgb(129, 154, 194),
+            ui(129, 154, 194),
             menu,
         );
 
@@ -346,7 +350,7 @@ impl App {
             let available = self.terminal_profile_shell_available(*shell);
             let is_default = *shell == default_shell;
             if is_default {
-                Self::rounded_fill(hdc, *row, s(4), rgb(24, 53, 94));
+                Self::rounded_fill(hdc, *row, s(4), ui(24, 53, 94));
                 Self::fill(
                     hdc,
                     RECT {
@@ -355,7 +359,7 @@ impl App {
                         right: row.left + s(3),
                         bottom: row.bottom - s(2),
                     },
-                    rgb(40, 205, 225),
+                    ui(40, 205, 225),
                 );
             }
             let icon = RECT {
@@ -365,9 +369,9 @@ impl App {
                 bottom: row.bottom - s(3),
             };
             let text_color = if available {
-                rgb(226, 235, 249)
+                ui(226, 235, 249)
             } else {
-                rgb(91, 107, 132)
+                ui(91, 107, 132)
             };
             self.paint_terminal_profile_shell_icon(hdc, *shell, icon, available);
             Self::label(
@@ -386,7 +390,7 @@ impl App {
                     label,
                     row.right - width - s(10),
                     row.top + s(3),
-                    rgb(91, 107, 132),
+                    ui(91, 107, 132),
                     *row,
                 );
             } else if is_default {
@@ -396,9 +400,9 @@ impl App {
                     right: row.right - s(62),
                     bottom: row.top + s(19),
                 };
-                Self::rounded_fill(hdc, check, s(4), rgb(24, 104, 105));
+                Self::rounded_fill(hdc, check, s(4), ui(24, 104, 105));
                 unsafe {
-                    let pen = CreatePen(PS_SOLID, s(1).max(1), rgb(172, 246, 229));
+                    let pen = CreatePen(PS_SOLID, s(1).max(1), ui(172, 246, 229));
                     let old_pen = SelectObject(hdc, pen);
                     MoveToEx(hdc, check.left + s(3), check.top + s(7), null_mut());
                     LineTo(hdc, check.left + s(6), check.top + s(10));
@@ -411,7 +415,7 @@ impl App {
                     "Default",
                     check.right + s(6),
                     row.top + s(3),
-                    rgb(158, 179, 213),
+                    ui(158, 179, 213),
                     *row,
                 );
             }
@@ -430,16 +434,16 @@ impl App {
                 right: menu.right - s(10),
                 bottom: after_shells + s(2),
             },
-            rgb(40, 57, 84),
+            ui(40, 57, 84),
         );
         if let Some(settings) = layout.settings {
-            Self::rounded_fill(hdc, settings, s(4), rgb(17, 34, 59));
+            Self::rounded_fill(hdc, settings, s(4), ui(17, 34, 59));
             Self::label(
                 hdc,
                 "\u{2699}",
                 settings.left + s(8),
                 settings.top + s(3),
-                rgb(205, 220, 242),
+                ui(205, 220, 242),
                 settings,
             );
             Self::label(
@@ -447,7 +451,7 @@ impl App {
                 "Select Default Profile",
                 settings.left + s(38),
                 settings.top + s(4),
-                rgb(226, 235, 249),
+                ui(226, 235, 249),
                 settings,
             );
             Self::label(
@@ -455,17 +459,17 @@ impl App {
                 "\u{203a}",
                 settings.right - s(16),
                 settings.top + s(3),
-                rgb(158, 179, 213),
+                ui(158, 179, 213),
                 settings,
             );
         } else {
-            Self::rounded_fill(hdc, layout.footer, s(4), rgb(17, 34, 59));
+            Self::rounded_fill(hdc, layout.footer, s(4), ui(17, 34, 59));
             Self::label(
                 hdc,
                 "\u{2039}",
                 layout.footer.left + s(8),
                 layout.footer.top + s(3),
-                rgb(158, 179, 213),
+                ui(158, 179, 213),
                 layout.footer,
             );
             Self::label(
@@ -473,7 +477,7 @@ impl App {
                 "Back",
                 layout.footer.left + s(28),
                 layout.footer.top + s(4),
-                rgb(205, 220, 242),
+                ui(205, 220, 242),
                 layout.footer,
             );
         }
@@ -487,27 +491,31 @@ impl App {
         available: bool,
     ) {
         let s = |v: i32| self.scale(v);
-        let muted = rgb(75, 91, 116);
+        let muted = ui(75, 91, 116);
         if shell == ShellKind::GitBash {
             self.rail_icon(
                 hdc,
                 2,
                 icon.left + s(2),
                 icon.top + s(1),
-                if available { rgb(244, 91, 57) } else { muted },
+                if available { ui(244, 91, 57) } else { muted },
             );
             return;
         }
 
         let (border, background, glyph) = match shell {
-            ShellKind::PowerShell if available => {
-                (rgb(70, 161, 232), rgb(27, 103, 175), rgb(247, 251, 255))
-            }
-            ShellKind::CommandPrompt if available => {
-                (rgb(116, 137, 168), rgb(15, 23, 36), rgb(230, 237, 247))
-            }
-            ShellKind::Wsl if available => (rgb(77, 184, 137), rgb(15, 52, 44), rgb(193, 242, 216)),
-            _ => (rgb(65, 79, 101), rgb(18, 27, 41), muted),
+            ShellKind::PowerShell if available => (
+                ui(70, 161, 232),
+                ui(27, 103, 175),
+                label_on(ui(27, 103, 175), 247, 251, 255),
+            ),
+            ShellKind::CommandPrompt if available => (
+                ui(116, 137, 168),
+                ui(15, 23, 36),
+                label_on(ui(15, 23, 36), 230, 237, 247),
+            ),
+            ShellKind::Wsl if available => (ui(77, 184, 137), ui(15, 52, 44), ui(193, 242, 216)),
+            _ => (ui(65, 79, 101), ui(18, 27, 41), muted),
         };
         self.panel_card(hdc, icon, s(3), border, background);
 

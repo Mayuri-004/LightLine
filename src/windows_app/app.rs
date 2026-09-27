@@ -35,7 +35,8 @@ pub(super) struct TerminalPane {
 // worker thread so poll_workers only has to apply the result.
 pub(super) enum ExtensionInstallKind {
     IconTheme,
-    ColorTheme(Theme),
+    // The installed variant to switch to, by name.
+    ColorTheme(String),
 }
 
 pub(super) enum WorkerMessage {
@@ -501,6 +502,8 @@ pub(super) struct App {
     // LightLine's default, without disturbing the theme when an unrelated
     // extension is installed/removed.
     pub(super) active_color_theme: Option<String>,
+    // Where the Extensions panel drew its "Color Theme" row, for clicks.
+    pub(super) color_theme_row: std::cell::Cell<Option<RECT>>,
     pub(super) dpi: u32,
     pub(super) zoom: i32,
     pub(super) line_height: i32,
@@ -977,7 +980,9 @@ impl App {
         let (lsp_tx, lsp_rx) = mpsc::channel();
         let (debug_tx, debug_rx) = mpsc::channel();
         let settings = lightline::settings::Settings::load();
-        let theme = Theme::default_dark().with_overrides(&settings.colors);
+        // The theme settings.json chose, remembered across restarts.
+        let (theme, active_color_theme) = Self::build_theme(&settings);
+        super::theme::activate(&theme);
         Self {
             tabs: vec![Tab::placeholder()],
             active: 0,
@@ -996,7 +1001,8 @@ impl App {
             hero_icon,
             icons: IconSet::new(dpi, zoom),
             theme,
-            active_color_theme: None,
+            active_color_theme,
+            color_theme_row: std::cell::Cell::new(None),
             dpi,
             zoom,
             line_height,
@@ -1267,9 +1273,7 @@ impl App {
                     self.icons = IconSet::new(self.dpi, self.zoom);
                 }
                 if self.active_color_theme.as_deref() == Some(registry_id.as_str()) {
-                    self.theme = Theme::default_dark().with_overrides(&self.settings.colors);
-                    self.active_color_theme = None;
-                    unsafe { InvalidateRect(hwnd, null(), 0) };
+                    self.set_color_theme(hwnd, None);
                 }
                 self.status = format!("{name} removed");
                 self.refresh(hwnd);
@@ -1280,7 +1284,6 @@ impl App {
             self.status = format!("Resolving {name} from the Zed registry...");
             let tx = self.worker_tx.clone();
             let worker_id = id.to_string();
-            let color_overrides = self.settings.colors.clone();
             self.worker_started(hwnd);
             std::thread::spawn(move || {
                 let outcome = lightline::extensions::zed_registry::resolve(&registry_id).and_then(
@@ -1299,9 +1302,7 @@ impl App {
                                 let _ = lightline::extensions::installer::uninstall(&registry_id);
                                 return Err("its theme file could not be parsed".to_string());
                             };
-                            let base = Theme::default_dark().with_overrides(&color_overrides);
-                            let theme = Theme::from_zed_color_theme(&base, &zed_theme);
-                            return Ok(ExtensionInstallKind::ColorTheme(theme));
+                            return Ok(ExtensionInstallKind::ColorTheme(zed_theme.name));
                         }
                         // Not something LightLine can actually use yet
                         // (needs WASM execution) -- don't leave a dead,

@@ -24,6 +24,9 @@ pub struct Settings {
     pub default_terminal_profile: ShellKind,
     /// Load web images in Markdown previews without asking first.
     pub markdown_load_remote_images: bool,
+    /// The installed color-theme variant in use, by name (e.g. "Dracula");
+    /// None is LightLine's own theme.
+    pub color_theme: Option<String>,
     // Colors can be overridden; values are 0xRRGGBB.
     pub colors: HashMap<String, u32>,
 }
@@ -46,6 +49,7 @@ impl Default for Settings {
             parse_limit_kb: 128,
             default_terminal_profile: ShellKind::PowerShell,
             markdown_load_remote_images: false,
+            color_theme: None,
             colors: HashMap::new(),
         }
     }
@@ -133,6 +137,12 @@ impl Settings {
         if let Some(n) = value.get("parseLimitKb").and_then(|v| v.as_u64()) {
             settings.parse_limit_kb = (n as usize).clamp(32, 4096);
         }
+        if let Some(name) = value.get("colorTheme").and_then(|v| v.as_str()) {
+            let name = name.trim();
+            if !name.is_empty() {
+                settings.color_theme = Some(name.to_owned());
+            }
+        }
         if let Some(b) = value
             .get("markdownLoadRemoteImages")
             .and_then(|v| v.as_bool())
@@ -214,6 +224,9 @@ impl Settings {
             "parseLimitKb".into(),
             serde_json::Value::Number(self.parse_limit_kb.into()),
         );
+        if let Some(name) = &self.color_theme {
+            obj.insert("colorTheme".into(), serde_json::Value::String(name.clone()));
+        }
         obj.insert(
             "markdownLoadRemoteImages".into(),
             serde_json::Value::Bool(self.markdown_load_remote_images),
@@ -263,6 +276,17 @@ mod tests {
         };
         let loaded = Settings::parse(&s.to_json()).unwrap();
         assert!(loaded.format_on_save);
+    }
+
+    #[test]
+    fn color_theme_round_trips() {
+        assert!(Settings::default().color_theme.is_none());
+        let s = Settings {
+            color_theme: Some("Catppuccin Mocha".into()),
+            ..Settings::default()
+        };
+        let loaded = Settings::parse(&s.to_json()).unwrap();
+        assert_eq!(loaded.color_theme.as_deref(), Some("Catppuccin Mocha"));
     }
 
     #[test]

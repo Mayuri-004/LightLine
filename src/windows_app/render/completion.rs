@@ -68,7 +68,7 @@ impl App {
                 right: x + width - 1,
                 bottom: y + height - 1,
             },
-            rgb(22, 33, 54),
+            ui(22, 33, 54),
         );
 
         for (row, index) in (start..end).enumerate() {

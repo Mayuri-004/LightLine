@@ -1538,6 +1538,18 @@ impl App {
                 return;
             }
             if self.side_view == SideView::Extensions {
+                // The "Color Theme" row under Active Capabilities, where it
+                // was last drawn (in window coordinates, as painted).
+                let window_y = y + self.chrome_top();
+                if let Some(row) = self.color_theme_row.get()
+                    && x >= row.left
+                    && x < row.right
+                    && window_y >= row.top
+                    && window_y < row.bottom
+                {
+                    self.show_color_theme_menu(hwnd, row.left, row.bottom);
+                    return;
+                }
                 let (dpi, zoom) = (self.dpi, self.zoom);
                 let s = |v: i32| scaled(v, dpi, zoom);
                 let rail = s(RAIL);

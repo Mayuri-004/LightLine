@@ -133,7 +133,7 @@ impl App {
                         );
                     }
                     let color = if change.unmerged {
-                        rgb(240, 150, 90)
+                        ui(240, 150, 90)
                     } else if change.untracked {
                         self.theme.muted
                     } else if *staged {
@@ -372,12 +372,12 @@ impl App {
             layout.commit_button,
             self.scale(6),
             if ready {
-                rgb(108, 92, 246)
+                ui(108, 92, 246)
             } else {
                 self.theme.edge
             },
             if ready {
-                rgb(79, 70, 210)
+                ui(79, 70, 210)
             } else {
                 self.theme.active_bg
             },

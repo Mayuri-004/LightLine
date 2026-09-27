@@ -137,6 +137,7 @@ Open settings with **`Ctrl+,`** or run **`>Open Settings (JSON)`** from `Ctrl+P`
   "smoothScrolling": false,
   "parseLimitKb": 128,
   "markdownLoadRemoteImages": false,
+  "colorTheme": "Dracula",
   "colors": {
     "editorBg": "#141820",
     "text": "#d8dee9",
@@ -148,7 +149,7 @@ Open settings with **`Ctrl+,`** or run **`>Open Settings (JSON)`** from `Ctrl+P`
 }
 ```
 
-`tabSize`, `insertSpaces`, and `autoIndent` drive real editor behavior (indentation on Enter, tab-width rendering, the status bar's "Spaces: N" indicator) — they're not just stored. `formatOnSave` runs the active formatter (built-in for JSON/TOML, Prettier for web files) before every save. `colors` overrides any of LightLine's core theme fields by name — the same fields a Zed color-theme extension maps onto (see below); anything you don't set keeps LightLine's default dark palette.
+`tabSize`, `insertSpaces`, and `autoIndent` drive real editor behavior (indentation on Enter, tab-width rendering, the status bar's "Spaces: N" indicator) — they're not just stored. `formatOnSave` runs the active formatter (built-in for JSON/TOML, Prettier for web files) before every save. `colorTheme` names the installed color theme to use (a variant name such as `"Catppuccin Mocha"`; leave it out for LightLine's own theme) — **Preferences: Color Theme** in the command palette picks one and writes it here. `colors` overrides any of LightLine's core theme fields by name, on top of the color theme — the same fields a Zed color-theme extension maps onto (see below).
 
 ---
 
@@ -172,7 +173,7 @@ The Extensions panel (`Ctrl+Shift+X`) installs real extensions from the live [Ze
 Two extension types are supported today, both pure data (no extension code runs inside LightLine):
 
 - **Icon themes** — map file/folder names to SVG icons. **Material Icon Theme** can be installed from the Extensions panel; until an icon theme is installed, LightLine uses its built-in vector icons.
-- **Color themes** — map editor/chrome/syntax colors onto LightLine's `Theme`. Installing one (e.g. **Dracula**) updates the running editor's colors immediately, with no restart; anything a theme doesn't specify keeps LightLine's own default. Uninstalling it reverts to the default theme.
+- **Color themes** — recolor all of LightLine, not just the editor: sidebar, tabs, buttons, menus, dialogs, the Extensions panel and the terminal's colors, in dark and light themes alike. Installing one (e.g. **Dracula**) switches to it immediately, with no restart, and the choice is remembered across restarts. A theme that ships several variants (Catppuccin's Latte, Frappé, Macchiato and Mocha) offers each one in **Preferences: Color Theme**, also reachable from the Color Theme row under Active Capabilities in the Extensions panel. Colors a theme doesn't define are derived from its own palette, so they still match. Uninstalling it reverts to LightLine's own theme.
 
 Any other extension type (language servers, procedural/WASM extensions) is reported as not supported yet rather than silently half-installed.
 

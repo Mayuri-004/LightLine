@@ -23,9 +23,12 @@ const fn argb(r: u8, g: u8, b: u8) -> u32 {
     0xFF000000 | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
 }
 
-// Matches self.theme.editor_bg, so transparent pixels composite into the pane
-// background instead of GDI+'s default white.
-const IMAGE_BACKGROUND: u32 = argb(12, 21, 35);
+// The pane background (in the active theme), so transparent pixels
+// composite into it instead of GDI+'s default white.
+fn image_background() -> u32 {
+    let color = super::themed(super::rgb(12, 21, 35));
+    argb(color as u8, (color >> 8) as u8, (color >> 16) as u8)
+}
 
 fn ensure_gdiplus() {
     static STARTED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
@@ -106,7 +109,7 @@ pub(super) fn load_image(path: &Path) -> Option<ImageAsset> {
         // GpBitmap is a GpImage subtype in GDI+'s object model; the flat C
         // API only distinguishes them by pointer type, so this cast is the
         // normal way to call bitmap-specific functions on a loaded image.
-        let status = GdipCreateHBITMAPFromBitmap(image.cast(), &mut bitmap, IMAGE_BACKGROUND);
+        let status = GdipCreateHBITMAPFromBitmap(image.cast(), &mut bitmap, image_background());
         GdipDisposeImage(image);
         if status != Ok || bitmap.is_null() || width == 0 || height == 0 {
             return None;
@@ -140,10 +143,11 @@ pub(super) fn load_svg(bytes: &[u8], density: f32) -> Option<ImageAsset> {
     );
     resvg::render(&tree, transform, &mut pixmap.as_mut());
     // Premultiplied RGBA over the background, as the BGRX a DIB expects.
+    let backdrop = image_background();
     let background = [
-        (IMAGE_BACKGROUND & 0xff) as u16,
-        ((IMAGE_BACKGROUND >> 8) & 0xff) as u16,
-        ((IMAGE_BACKGROUND >> 16) & 0xff) as u16,
+        (backdrop & 0xff) as u16,
+        ((backdrop >> 8) & 0xff) as u16,
+        ((backdrop >> 16) & 0xff) as u16,
     ];
     let mut bgrx = vec![0u8; (width * height * 4) as usize];
     for (dst, src) in bgrx.chunks_exact_mut(4).zip(pixmap.data().chunks_exact(4)) {

@@ -42,13 +42,13 @@ impl App {
             right: model_left + s(64),
             bottom: rect.top + s(30),
         };
-        Self::rounded_fill(hdc, badge_rect, s(5), rgb(38, 26, 80));
+        Self::rounded_fill(hdc, badge_rect, s(5), ui(38, 26, 80));
         self.sparkle_glyph(
             hdc,
             model_left + s(6),
             rect.top + s(15),
             s(10),
-            rgb(180, 150, 255),
+            ui(180, 150, 255),
         );
         unsafe { SelectObject(hdc, self.ui_font) };
         Self::label(
@@ -56,7 +56,7 @@ impl App {
             "Tera",
             model_left + s(20),
             rect.top + s(12),
-            rgb(200, 185, 255),
+            ui(200, 185, 255),
             clip,
         );
 
@@ -110,7 +110,7 @@ impl App {
             right: rect.right - s(16),
             bottom: chat_top + s(44),
         };
-        self.panel_card(hdc, user_bubble, s(8), rgb(38, 64, 120), rgb(18, 34, 66));
+        self.panel_card(hdc, user_bubble, s(8), ui(38, 64, 120), ui(18, 34, 66));
         Self::label(
             hdc,
             "Explain this function and suggest an",
@@ -136,7 +136,7 @@ impl App {
             right: rect.left + s(38),
             bottom: assistant_top + s(22),
         };
-        Self::rounded_fill(hdc, avatar_rect, s(6), rgb(72, 50, 175));
+        Self::rounded_fill(hdc, avatar_rect, s(6), ui(72, 50, 175));
         self.sparkle_glyph(
             hdc,
             avatar_rect.left + s(5),
@@ -194,7 +194,7 @@ impl App {
             "Possible optimization:",
             text_clip.left,
             text_y + s(58),
-            rgb(180, 200, 230),
+            ui(180, 200, 230),
             text_clip,
         );
         Self::label(
@@ -239,7 +239,7 @@ impl App {
             right: rect.right - s(14),
             bottom: code_top + code_h,
         };
-        self.panel_card(hdc, code_rect, s(6), rgb(28, 48, 85), rgb(10, 16, 26));
+        self.panel_card(hdc, code_rect, s(6), ui(28, 48, 85), ui(10, 16, 26));
 
         // Code header
         Self::label(
@@ -247,7 +247,7 @@ impl App {
             "Optimized Version",
             code_rect.left + s(12),
             code_rect.top + s(8),
-            rgb(52, 211, 153),
+            ui(52, 211, 153),
             code_rect,
         );
         let copy_rect = RECT {
@@ -256,7 +256,7 @@ impl App {
             right: code_rect.right - s(10),
             bottom: code_rect.top + s(24),
         };
-        Self::rounded_fill(hdc, copy_rect, s(4), rgb(22, 34, 58));
+        Self::rounded_fill(hdc, copy_rect, s(4), ui(22, 34, 58));
         Self::label(
             hdc,
             "Copy",
@@ -329,7 +329,7 @@ impl App {
             right: rect.right - s(14),
             bottom: rect.bottom - s(72) + input_h,
         };
-        self.panel_card(hdc, input_rect, s(8), rgb(42, 68, 120), rgb(14, 22, 38));
+        self.panel_card(hdc, input_rect, s(8), ui(42, 68, 120), ui(14, 22, 38));
 
         Self::label(
             hdc,
@@ -347,7 +347,7 @@ impl App {
             right: input_rect.right - s(8),
             bottom: input_rect.top + s(32),
         };
-        Self::rounded_fill(hdc, send_btn, s(12), rgb(68, 88, 225));
+        Self::rounded_fill(hdc, send_btn, s(12), ui(68, 88, 225));
         Self::label(
             hdc,
             "\u{27a4}",
@@ -365,20 +365,20 @@ impl App {
             right: rect.left + s(68),
             bottom: chip_y + s(20),
         };
-        Self::rounded_fill(hdc, tera_chip, s(4), rgb(32, 24, 70));
+        Self::rounded_fill(hdc, tera_chip, s(4), ui(32, 24, 70));
         self.sparkle_glyph(
             hdc,
             tera_chip.left + s(5),
             chip_y + s(5),
             s(9),
-            rgb(180, 150, 255),
+            ui(180, 150, 255),
         );
         Self::label(
             hdc,
             "Tera",
             tera_chip.left + s(18),
             chip_y + s(2),
-            rgb(200, 185, 255),
+            ui(200, 185, 255),
             clip,
         );
 
@@ -388,7 +388,7 @@ impl App {
             right: tera_chip.right + s(84),
             bottom: chip_y + s(20),
         };
-        Self::rounded_fill(hdc, model_chip, s(4), rgb(20, 32, 58));
+        Self::rounded_fill(hdc, model_chip, s(4), ui(20, 32, 58));
         Self::label(
             hdc,
             "Medium \u{25be}",

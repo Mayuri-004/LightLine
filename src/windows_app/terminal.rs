@@ -9,26 +9,6 @@ pub(super) const TERMINAL_EVENT_MESSAGE: u32 = WM_APP + 8;
 pub(super) const TERMINAL_HEADER: i32 = 34;
 pub(super) const TERMINAL_PAD: i32 = 8;
 
-// A 16-entry ANSI palette tuned for the dark self.theme.editor_bg / self.theme.sidebar_bg surface.
-const ANSI_PALETTE: [u32; 16] = [
-    rgb(30, 34, 44),    // black
-    rgb(205, 79, 79),   // red
-    rgb(119, 221, 119), // green
-    rgb(229, 200, 90),  // yellow
-    rgb(96, 143, 244),  // blue
-    rgb(190, 120, 224), // magenta
-    rgb(92, 200, 214),  // cyan
-    rgb(210, 218, 235), // white
-    rgb(110, 120, 140), // bright black
-    rgb(240, 100, 100), // bright red
-    rgb(150, 240, 150), // bright green
-    rgb(245, 220, 120), // bright yellow
-    rgb(130, 170, 250), // bright blue
-    rgb(215, 150, 245), // bright magenta
-    rgb(130, 225, 235), // bright cyan
-    rgb(240, 245, 252), // bright white
-];
-
 fn brighten(color: u32) -> u32 {
     let lift = |channel: u32| (channel + (255 - channel) / 2).min(255) as u8;
     rgb(
@@ -38,9 +18,11 @@ fn brighten(color: u32) -> u32 {
     )
 }
 
-fn ansi_color(index: u8) -> u32 {
+// The first 16 colors come from the theme (`Theme::ansi`); the 6x6x6
+// cube and the grey ramp above them are fixed by the xterm standard.
+fn ansi_color(index: u8, palette: &[u32; 16]) -> u32 {
     match index {
-        0..=15 => ANSI_PALETTE[index as usize],
+        0..=15 => palette[index as usize],
         16..=231 => {
             let value = index - 16;
             let channel = |component: u8| {
@@ -65,16 +47,21 @@ fn ansi_color(index: u8) -> u32 {
 
 // Map a cell color to a GDI color. Default resolves to the panel palette; a bold
 // foreground promotes the base 8 ANSI colors to their bright variants.
-pub(super) fn cell_colors(cell: &Cell, default_fg: u32, default_bg: u32) -> (u32, u32) {
+pub(super) fn cell_colors(
+    cell: &Cell,
+    default_fg: u32,
+    default_bg: u32,
+    palette: &[u32; 16],
+) -> (u32, u32) {
     let mut foreground = match cell.foreground {
         TermColor::Default => default_fg,
-        TermColor::Idx(index) if cell.bold && index < 8 => ansi_color(index + 8),
-        TermColor::Idx(index) => ansi_color(index),
+        TermColor::Idx(index) if cell.bold && index < 8 => ansi_color(index + 8, palette),
+        TermColor::Idx(index) => ansi_color(index, palette),
         TermColor::Rgb(red, green, blue) => rgb(red, green, blue),
     };
     let mut background = match cell.background {
         TermColor::Default => default_bg,
-        TermColor::Idx(index) => ansi_color(index),
+        TermColor::Idx(index) => ansi_color(index, palette),
         TermColor::Rgb(red, green, blue) => rgb(red, green, blue),
     };
     if cell.dim && !matches!(cell.foreground, TermColor::Default) {

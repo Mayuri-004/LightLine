@@ -124,7 +124,7 @@ impl App {
             } else {
                 None
             };
-            let paused_bg = blend(self.theme.editor_bg, rgb(255, 204, 0), 0.14);
+            let paused_bg = blend(self.theme.editor_bg, ui(255, 204, 0), 0.14);
             // Screen rows from the top of the view. With word wrap a line
             // takes several: its gutter (number, breakpoint, fold) goes on
             // the first, and its text continues on the rest.
@@ -225,13 +225,13 @@ impl App {
                         // has a breakpoint.
                         let marker_x = left + self.scale(10);
                         let marker_y = y + self.line_height / 2;
-                        let red = rgb(232, 72, 76);
+                        let red = ui(232, 72, 76);
                         let marker = |glyph: DebugGlyph, color: u32, size: i32, shift: i32| {
                             let (x, y) = (marker_x + shift - size / 2, marker_y - size / 2);
                             self.icons.draw_glyph(hdc, glyph, color, x, y, size);
                         };
                         if paused_here {
-                            let yellow = rgb(255, 204, 0);
+                            let yellow = ui(255, 204, 0);
                             marker(DebugGlyph::ExecutionArrow, yellow, self.scale(18), 0);
                             if doc.has_breakpoint(index) {
                                 marker(DebugGlyph::Breakpoint, red, self.scale(9), -self.scale(1));
@@ -495,7 +495,7 @@ impl App {
             DeleteObject(git_del_brush);
             // Bracket matching: highlight the matching bracket pair.
             if pane == self.focused_pane && !self.terminal_focus {
-                let match_brush = CreateSolidBrush(rgb(60, 80, 120));
+                let match_brush = CreateSolidBrush(ui(60, 80, 120));
                 let bracket_at = |byte: usize, line_idx: usize| -> Option<(char, usize)> {
                     let text = doc.line(line_idx);
                     if byte >= text.len() || !text.is_char_boundary(byte) {

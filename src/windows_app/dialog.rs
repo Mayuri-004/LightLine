@@ -61,8 +61,8 @@ impl DialogIcon {
     // expanding this refactor into rewiring the dialog module's call chain.
     fn tint(self) -> u32 {
         match self {
-            DialogIcon::Question => rgb(56, 189, 248),
-            DialogIcon::Error => rgb(205, 79, 79),
+            DialogIcon::Question => ui(56, 189, 248),
+            DialogIcon::Error => ui(205, 79, 79),
         }
     }
 
@@ -615,28 +615,28 @@ fn paint_dialog(state: &mut DialogState, hwnd: HWND) {
         let mut client = RECT::default();
         GetClientRect(hwnd, &mut client);
 
-        App::fill(hdc, client, DLG_BG);
+        App::fill(hdc, client, themed(DLG_BG));
         let header = RECT {
             left: 0,
             top: 0,
             right: client.right,
             bottom: state.header_height,
         };
-        App::fill(hdc, header, DLG_HEADER);
+        App::fill(hdc, header, themed(DLG_HEADER));
         let accent = RECT {
             left: 0,
             top: 0,
             right: client.right,
             bottom: state.scale(3).max(2),
         };
-        App::fill(hdc, accent, DLG_ACCENT);
-        draw_border(hdc, client, DLG_BORDER);
+        App::fill(hdc, accent, themed(DLG_ACCENT));
+        draw_border(hdc, client, themed(DLG_BORDER));
 
         SetBkMode(hdc, TRANSPARENT as i32);
 
         // Title.
         SelectObject(hdc, state.title_font);
-        SetTextColor(hdc, DLG_TEXT);
+        SetTextColor(hdc, themed(DLG_TEXT));
         let mut title_rect = RECT {
             left: state.pad,
             top: 0,
@@ -654,9 +654,9 @@ fn paint_dialog(state: &mut DialogState, hwnd: HWND) {
         SetTextColor(
             hdc,
             if state.hover_close {
-                DLG_TEXT
+                themed(DLG_TEXT)
             } else {
-                DLG_MUTED
+                themed(DLG_MUTED)
             },
         );
         let mut close_rect = state.close_rect;
@@ -673,7 +673,7 @@ fn paint_dialog(state: &mut DialogState, hwnd: HWND) {
 
         // Message body.
         SelectObject(hdc, state.font);
-        SetTextColor(hdc, DLG_TEXT);
+        SetTextColor(hdc, themed(DLG_TEXT));
         let mut text_rect = state.text_rect;
         DrawTextW(
             hdc,
@@ -689,23 +689,23 @@ fn paint_dialog(state: &mut DialogState, hwnd: HWND) {
             let hovered = state.hover == Some(index);
             let pressed = state.pressed == Some(index);
             let color = if pressed {
-                DLG_BTN_PRESSED
+                themed(DLG_BTN_PRESSED)
             } else if is_primary {
                 if hovered {
-                    DLG_BTN_PRIMARY_HOVER
+                    themed(DLG_BTN_PRIMARY_HOVER)
                 } else {
-                    DLG_BTN_PRIMARY
+                    themed(DLG_BTN_PRIMARY)
                 }
             } else if hovered {
-                DLG_BTN_HOVER
+                themed(DLG_BTN_HOVER)
             } else {
-                DLG_BTN
+                themed(DLG_BTN)
             };
             App::rounded_fill(hdc, button.rect, state.radius, color);
             let text_color = if is_primary {
-                rgb(240, 246, 255)
+                label_on(color, 240, 246, 255)
             } else {
-                DLG_TEXT
+                themed(DLG_TEXT)
             };
             SetTextColor(hdc, text_color);
             let mut rect = button.rect;
@@ -717,7 +717,7 @@ fn paint_dialog(state: &mut DialogState, hwnd: HWND) {
                 DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
             );
             if state.focus == index {
-                let pen = CreatePen(PS_SOLID, state.scale(1).max(1), DLG_ACCENT);
+                let pen = CreatePen(PS_SOLID, state.scale(1).max(1), themed(DLG_ACCENT));
                 let previous_pen = SelectObject(hdc, pen);
                 let previous_brush = SelectObject(hdc, GetStockObject(NULL_BRUSH));
                 let inset = state.scale(2);
@@ -766,7 +766,7 @@ fn draw_icon(hdc: HDC, state: &DialogState) {
         DeleteObject(brush);
 
         SelectObject(hdc, state.title_font);
-        SetTextColor(hdc, rgb(10, 16, 28));
+        SetTextColor(hdc, ui(10, 16, 28));
         let mut rect = state.icon_rect;
         let glyph = utf16(state.icon.glyph());
         DrawTextW(

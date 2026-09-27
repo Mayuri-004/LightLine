@@ -496,13 +496,13 @@ impl App {
     ) {
         unsafe {
             let s = |v: i32| (v * size) / 16;
-            let folder_tab_color = rgb(235, 175, 65); // warm amber gold tab
-            let folder_body_color = rgb(215, 155, 45); // deeper gold body
-            let folder_flap_color = rgb(248, 192, 75); // bright front flap when open
+            let folder_tab_color = ui(235, 175, 65); // warm amber gold tab
+            let folder_body_color = ui(215, 155, 45); // deeper gold body
+            let folder_flap_color = ui(248, 192, 75); // bright front flap when open
 
             let brush_tab = CreateSolidBrush(folder_tab_color);
             let brush_body = CreateSolidBrush(folder_body_color);
-            let pen_border = CreatePen(PS_SOLID, 1, rgb(170, 115, 25));
+            let pen_border = CreatePen(PS_SOLID, 1, ui(170, 115, 25));
 
             let prev_brush = SelectObject(hdc, brush_tab);
             let prev_pen = SelectObject(hdc, pen_border);
@@ -677,8 +677,8 @@ impl App {
                     right: x + s(13),
                     bottom: y + s(14),
                 };
-                let badge_brush = CreateSolidBrush(rgb(16, 24, 38)); // dark contrast pill
-                let badge_pen = CreatePen(PS_SOLID, 1, rgb(16, 24, 38));
+                let badge_brush = CreateSolidBrush(ui(16, 24, 38)); // dark contrast pill
+                let badge_pen = CreatePen(PS_SOLID, 1, ui(16, 24, 38));
                 SelectObject(hdc, badge_brush);
                 SelectObject(hdc, badge_pen);
                 RoundRect(
@@ -739,58 +739,58 @@ pub(in crate::windows_app) fn file_type_style(path: &Path) -> FileTypeStyle {
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     match ext.to_ascii_lowercase().as_str() {
         "rs" => FileTypeStyle {
-            body_color: rgb(222, 105, 45), // Rust orange
-            accent_color: rgb(245, 145, 80),
+            body_color: ui(222, 105, 45), // Rust orange
+            accent_color: ui(245, 145, 80),
             badge: "Rs",
         },
         "py" | "pyw" => FileTypeStyle {
-            body_color: rgb(53, 114, 165),   // Python blue
-            accent_color: rgb(255, 212, 59), // Python yellow
+            body_color: ui(53, 114, 165),   // Python blue
+            accent_color: ui(255, 212, 59), // Python yellow
             badge: "Py",
         },
         "md" | "markdown" => FileTypeStyle {
-            body_color: rgb(65, 145, 195), // Markdown cyan blue
-            accent_color: rgb(160, 220, 255),
+            body_color: ui(65, 145, 195), // Markdown cyan blue
+            accent_color: ui(160, 220, 255),
             badge: "M",
         },
         "toml" => FileTypeStyle {
-            body_color: rgb(205, 145, 55), // Cargo toml gold
-            accent_color: rgb(255, 200, 100),
+            body_color: ui(205, 145, 55), // Cargo toml gold
+            accent_color: ui(255, 200, 100),
             badge: "C",
         },
         "json" => FileTypeStyle {
-            body_color: rgb(215, 165, 45), // JSON amber
-            accent_color: rgb(255, 220, 105),
+            body_color: ui(215, 165, 45), // JSON amber
+            accent_color: ui(255, 220, 105),
             badge: "{}",
         },
         "yaml" | "yml" => FileTypeStyle {
-            body_color: rgb(195, 80, 145), // YAML magenta
-            accent_color: rgb(240, 125, 195),
+            body_color: ui(195, 80, 145), // YAML magenta
+            accent_color: ui(240, 125, 195),
             badge: "Y",
         },
         "png" | "jpg" | "jpeg" | "svg" | "ico" | "webp" | "bmp" => FileTypeStyle {
-            body_color: rgb(165, 95, 220), // Image purple
-            accent_color: rgb(215, 160, 255),
+            body_color: ui(165, 95, 220), // Image purple
+            accent_color: ui(215, 160, 255),
             badge: "IMG",
         },
         "ps1" | "bat" | "cmd" | "sh" => FileTypeStyle {
-            body_color: rgb(45, 165, 115), // Terminal green
-            accent_color: rgb(95, 215, 160),
+            body_color: ui(45, 165, 115), // Terminal green
+            accent_color: ui(95, 215, 160),
             badge: ">_",
         },
         "lock" => FileTypeStyle {
-            body_color: rgb(125, 135, 150), // Lock silver
-            accent_color: rgb(175, 185, 200),
+            body_color: ui(125, 135, 150), // Lock silver
+            accent_color: ui(175, 185, 200),
             badge: "LK",
         },
         _ if name.starts_with(".git") => FileTypeStyle {
-            body_color: rgb(240, 80, 50), // Git red/orange
-            accent_color: rgb(255, 130, 100),
+            body_color: ui(240, 80, 50), // Git red/orange
+            accent_color: ui(255, 130, 100),
             badge: "Git",
         },
         _ => FileTypeStyle {
-            body_color: rgb(90, 105, 130), // Default document slate
-            accent_color: rgb(145, 160, 185),
+            body_color: ui(90, 105, 130), // Default document slate
+            accent_color: ui(145, 160, 185),
             badge: "",
         },
     }

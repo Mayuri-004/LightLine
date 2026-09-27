@@ -61,7 +61,7 @@ impl App {
                 right: x + width - 1,
                 bottom: y + height - 1,
             },
-            rgb(24, 38, 60),
+            ui(24, 38, 60),
         );
         let mut content = RECT {
             left: x + padding,

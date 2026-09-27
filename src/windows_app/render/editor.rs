@@ -251,7 +251,7 @@ impl App {
                     bottom: self.scale(35),
                 },
                 self.scale(5),
-                rgb(63, 47, 150),
+                ui(63, 47, 150),
             );
             SelectObject(hdc, self.ui_font);
             Self::label(
@@ -642,8 +642,8 @@ impl App {
                     hdc,
                     command_rect,
                     self.scale(6),
-                    rgb(43, 76, 132),
-                    rgb(12, 25, 48),
+                    ui(43, 76, 132),
+                    ui(12, 25, 48),
                 );
                 self.rail_icon(
                     hdc,
@@ -671,7 +671,7 @@ impl App {
                     right: command_rect.right - self.scale(7),
                     bottom: command_rect.bottom - self.scale(4),
                 };
-                Self::rounded_fill(hdc, key_rect, self.scale(4), rgb(25, 43, 76));
+                Self::rounded_fill(hdc, key_rect, self.scale(4), ui(25, 43, 76));
                 Self::label(
                     hdc,
                     "Ctrl P",
@@ -827,7 +827,7 @@ impl App {
                             input_rect,
                             self.scale(4),
                             self.theme.blue,
-                            rgb(16, 26, 48),
+                            ui(16, 26, 48),
                         );
                         if input.is_folder {
                             if !self.icons.draw_generic(
@@ -927,12 +927,12 @@ impl App {
                                 if is_being_renamed {
                                     self.theme.blue
                                 } else {
-                                    rgb(48, 84, 156)
+                                    ui(48, 84, 156)
                                 },
                                 if is_being_renamed {
-                                    rgb(16, 26, 48)
+                                    ui(16, 26, 48)
                                 } else {
-                                    rgb(26, 44, 90)
+                                    ui(26, 44, 90)
                                 },
                             );
                         }
@@ -953,7 +953,7 @@ impl App {
                                     right: guide_x + 1.max(self.scale(1)),
                                     bottom: top + self.scale(EXPLORER_ROW),
                                 },
-                                rgb(38, 52, 78),
+                                ui(38, 52, 78),
                             );
                         }
 
@@ -1040,7 +1040,7 @@ impl App {
                                 } else if item.entry.is_dir {
                                     self.theme.muted
                                 } else {
-                                    rgb(185, 205, 230)
+                                    ui(185, 205, 230)
                                 },
                                 RECT {
                                     left: left + self.scale(36),
@@ -1206,7 +1206,7 @@ impl App {
                 "\u{25cf}",
                 ready_x,
                 editor_bottom + self.scale(5),
-                rgb(52, 211, 153),
+                ui(52, 211, 153),
                 rect,
             );
             Self::label(
@@ -1254,7 +1254,7 @@ impl App {
                     &language,
                     language_rect.left,
                     editor_bottom + self.scale(5),
-                    rgb(80, 160, 220),
+                    ui(80, 160, 220),
                     label_clip,
                 );
                 mid_x

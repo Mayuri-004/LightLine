@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Rows after the first keep the line's indent, so wrapped list items stay aligned; line numbers, breakpoints and folds stay on each line's first row.
   - Up/Down and Page Up/Down move by screen row and keep the caret's horizontal position, and the mouse wheel scrolls by rows. Clicking, selecting, search results, error underlines and bracket matching all follow the wrapped rows.
   - Only lines on screen are wrapped, so large files stay fast.
+- **Color Themes Recolor All of LightLine**: An installed color theme used to change only the editor text and a few surfaces, while the sidebar, tabs, buttons, menus, dialogs, the Extensions panel and the terminal kept LightLine's midnight blue. Now every part of the window follows the theme, dark or light (e.g. Dracula Light, Catppuccin Latte), including the terminal's 16 colors and the window frame. Colors a theme doesn't define are worked out from its own palette, so they still match.
+  - **Preferences: Color Theme** (command palette, or the Color Theme row under Active Capabilities in the Extensions panel) lists LightLine's own theme and every installed theme variant, so themes that ship several (Catppuccin Latte/Frappé/Macchiato/Mocha, Dracula/Dracula Light) can each be picked. Previously only the first one in the extension's first file was used.
+  - The chosen theme is remembered as `"colorTheme"` in `settings.json` and comes back after a restart; before, LightLine started in its default theme every time. `colors` overrides still apply on top.
 
 #### Changed
 - **No Terminal at Startup**: LightLine no longer starts a PowerShell session on every launch. Startup is faster, the Welcome screen shows again, and the editor keeps keyboard focus. `` Ctrl+` `` starts the first terminal when you need it.

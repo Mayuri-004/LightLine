@@ -92,6 +92,7 @@ impl App {
             ("Markdown: Open Preview", 36),
             ("Markdown: Open Preview to the Side", 37),
             ("View: Toggle Word Wrap (Alt+Z)", 38),
+            ("Preferences: Color Theme", 39),
         ]
         .into_iter()
         .filter(|(name, _)| name.to_ascii_lowercase().contains(&query))
@@ -217,6 +218,10 @@ impl App {
                 Some(36) => self.open_markdown_preview(hwnd, false),
                 Some(37) => self.open_markdown_preview(hwnd, true),
                 Some(38) => self.toggle_word_wrap(hwnd),
+                Some(39) => {
+                    let center = self.command_center_rect(hwnd);
+                    self.show_color_theme_menu(hwnd, center.left, center.bottom);
+                }
                 _ => {}
             }
         } else {
@@ -247,11 +252,11 @@ impl App {
         match lightline::settings::Settings::try_load() {
             Ok(settings) => {
                 self.settings = settings;
-                // An installed color theme already folded the old overrides
-                // in; it keeps them until it is reinstalled or removed.
-                if self.active_color_theme.is_none() {
-                    self.theme = Theme::default_dark().with_overrides(&self.settings.colors);
-                }
+                // The chosen theme and the colors overrides, as now saved
+                // (a hand edit of "colorTheme" switches theme too).
+                let (theme, extension) = Self::build_theme(&self.settings);
+                let hwnd = self.hwnd;
+                self.apply_theme(hwnd, theme, extension);
                 true
             }
             Err(error) => {
@@ -671,10 +676,11 @@ impl App {
                                 self.icons = IconSet::new(self.dpi, self.zoom);
                             }
                         }
-                        Ok(ExtensionInstallKind::ColorTheme(theme)) => {
-                            self.theme = theme;
-                            self.active_color_theme = Some(registry_id);
-                            unsafe { InvalidateRect(hwnd, null(), 0) };
+                        // Applied and remembered, so it is still the theme
+                        // after a restart.
+                        Ok(ExtensionInstallKind::ColorTheme(name)) => {
+                            let _ = registry_id;
+                            self.set_color_theme(hwnd, Some(name));
                         }
                         Err(_) => {}
                     }
