@@ -38,6 +38,9 @@ impl App {
             self.toggle_word_wrap(hwnd);
             return true;
         }
+        if self.ai_typing() && self.ai_key(hwnd, key, ctrl, shift) {
+            return true;
+        }
         if self.terminal_profile_menu_open && key == VK_ESCAPE as u32 && !ctrl && !shift {
             self.terminal_profile_menu_open = false;
             self.terminal_profile_defaults_open = false;
@@ -845,6 +848,10 @@ impl App {
         if unsafe { GetKeyState(VK_CONTROL as i32) } < 0 {
             return;
         }
+        if self.ai_typing() {
+            self.ai_char(hwnd, unit);
+            return;
+        }
         if self.terminal_focus
             && !self.quick_open
             && !self.search_input
@@ -1287,21 +1294,12 @@ impl App {
             let gap = self.chrome_gap();
             let ai_left = self.editor_right(hwnd) + gap;
             if x >= ai_left && x < rect.right - gap {
-                let chrome_top = self.chrome_top();
-                if y >= chrome_top && y <= chrome_top + self.scale(42) {
-                    if x >= rect.right - gap - self.scale(30) {
-                        self.toggle_ai_assistant(hwnd);
-                        return;
-                    }
-                    if x >= rect.right - gap - self.scale(54) {
-                        self.status = "Cleared Tera conversation".into();
-                        self.refresh(hwnd);
-                        return;
-                    }
-                }
+                self.ai_click(hwnd, x, y);
                 return;
             }
         }
+        // A click anywhere else takes the keyboard from the message box.
+        self.ai.focused = false;
         if y >= rect.bottom - self.scale(STATUS) {
             self.click_status_language(hwnd, rect, x, y);
             return;

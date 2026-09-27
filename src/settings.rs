@@ -27,6 +27,12 @@ pub struct Settings {
     /// The installed color-theme variant in use, by name (e.g. "Dracula");
     /// None is LightLine's own theme.
     pub color_theme: Option<String>,
+    /// The AI Assistant's server: an OpenAI-compatible endpoint such as
+    /// Ollama's (the default) or LM Studio's.
+    pub ai_endpoint: String,
+    /// The model the AI Assistant chats with; None until one is chosen,
+    /// which is what leaves the assistant off.
+    pub ai_model: Option<String>,
     // Colors can be overridden; values are 0xRRGGBB.
     pub colors: HashMap<String, u32>,
 }
@@ -50,6 +56,8 @@ impl Default for Settings {
             default_terminal_profile: ShellKind::PowerShell,
             markdown_load_remote_images: false,
             color_theme: None,
+            ai_endpoint: crate::ai::DEFAULT_ENDPOINT.to_string(),
+            ai_model: None,
             colors: HashMap::new(),
         }
     }
@@ -143,6 +151,18 @@ impl Settings {
                 settings.color_theme = Some(name.to_owned());
             }
         }
+        if let Some(endpoint) = value.get("aiEndpoint").and_then(|v| v.as_str()) {
+            let endpoint = endpoint.trim();
+            if !endpoint.is_empty() {
+                settings.ai_endpoint = endpoint.to_owned();
+            }
+        }
+        if let Some(model) = value.get("aiModel").and_then(|v| v.as_str()) {
+            let model = model.trim();
+            if !model.is_empty() {
+                settings.ai_model = Some(model.to_owned());
+            }
+        }
         if let Some(b) = value
             .get("markdownLoadRemoteImages")
             .and_then(|v| v.as_bool())
@@ -228,6 +248,13 @@ impl Settings {
             obj.insert("colorTheme".into(), serde_json::Value::String(name.clone()));
         }
         obj.insert(
+            "aiEndpoint".into(),
+            serde_json::Value::String(self.ai_endpoint.clone()),
+        );
+        if let Some(model) = &self.ai_model {
+            obj.insert("aiModel".into(), serde_json::Value::String(model.clone()));
+        }
+        obj.insert(
             "markdownLoadRemoteImages".into(),
             serde_json::Value::Bool(self.markdown_load_remote_images),
         );
@@ -287,6 +314,21 @@ mod tests {
         };
         let loaded = Settings::parse(&s.to_json()).unwrap();
         assert_eq!(loaded.color_theme.as_deref(), Some("Catppuccin Mocha"));
+    }
+
+    #[test]
+    fn ai_settings_round_trip() {
+        let defaults = Settings::default();
+        assert_eq!(defaults.ai_endpoint, "http://localhost:11434");
+        assert!(defaults.ai_model.is_none(), "the assistant starts off");
+        let s = Settings {
+            ai_endpoint: "http://localhost:1234/v1".into(),
+            ai_model: Some("qwen2.5-coder:7b".into()),
+            ..Settings::default()
+        };
+        let loaded = Settings::parse(&s.to_json()).unwrap();
+        assert_eq!(loaded.ai_endpoint, "http://localhost:1234/v1");
+        assert_eq!(loaded.ai_model.as_deref(), Some("qwen2.5-coder:7b"));
     }
 
     #[test]

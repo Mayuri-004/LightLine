@@ -33,6 +33,7 @@
 - 🏛️ **Unified Workbench & Welcome Dashboard**: A compact branded title bar, centered Quick Open command center, native window controls, and icon-only activity rail now carry consistently across the editor and Welcome screen. The responsive Welcome dashboard provides quick-start cards, recent projects, keyboard-driven actions, onboarding links, and community access without taking over the desktop.
 - 🌿 **Source Control**: Stage, commit and discard from the sidebar (`Ctrl+Shift+G`). A focused commit composer, Push/Pull/Fetch controls, branch and sync status, polished clean-worktree state, collapsible Staged/Changes/History sections, timeline commit history, and side-by-side diff review keep the complete Git workflow inside LightLine.
 - 🐞 **Interactive Debugger (Rust & Python)**: Built-in Debug Adapter Protocol (DAP) client for **Rust: Current Workspace** (built with Cargo, debugged with `lldb-dap`) and **Python: Current File** (debugged with `debugpy`). The configuration follows the active file, or can be pinned from the Run & Debug dropdown. It provides `F5` start/continue, gutter or `F9` breakpoints, Pause/Continue, Step Over/In/Out, Restart, Stop, expandable variable trees, call-stack inspection, breakpoint counts, and collapsible Variables/Call Stack/Breakpoints sections. Python programs run in the Output pane, so `input()` works while debugging, and an uncaught exception pauses where it was raised. Session controls appear only while a real debug session exists.
+- 🤖 **Local AI Assistant (optional)**: Ask about the selected code and get answers as they're written, from a model on your own PC through Ollama. Off until you connect it; nothing runs in the background or leaves your machine. See [AI Assistant](#ai-assistant-optional).
 - ▶️ **Multi-Language File Runner**: `Ctrl+Shift+R` runs the active Python, C/C++, or Rust file and streams its output into the Output pane. C/C++ files can be run but not yet debugged.
 - 🧩 **Real Zed Extensions & Icon Themes**: The redesigned Extensions panel (`Ctrl+Shift+X`) provides Marketplace/Installed tabs, live search, Featured/Themes/Formatters filters for the curated extensions, cards showing each extension's publisher, registry version and kind, and an Active Capabilities summary of the formatter and icon theme actually in use. It installs actual extensions from the live [Zed registry](https://github.com/zed-industries/extensions); installing a Zed **color theme** (e.g. Dracula) or the 1,000+ icon **Material Icon Theme** updates the editor immediately, with automatic fallback to the built-in vector icons when themes are removed.
 - ⚙️ **User Configuration**: JSON-backed settings at `%APPDATA%\LightLine\settings.json` (`Ctrl+,`) for fonts, indentation, colors, and behavior — including tab size, auto-indent, and format-on-save, all of which actually take effect.
@@ -138,6 +139,8 @@ Open settings with **`Ctrl+,`** or run **`>Open Settings (JSON)`** from `Ctrl+P`
   "parseLimitKb": 128,
   "markdownLoadRemoteImages": false,
   "colorTheme": "Dracula",
+  "aiEndpoint": "http://localhost:11434",
+  "aiModel": "qwen2.5-coder:7b",
   "colors": {
     "editorBg": "#141820",
     "text": "#d8dee9",
@@ -163,6 +166,21 @@ Open settings with **`Ctrl+,`** or run **`>Open Settings (JSON)`** from `Ctrl+P`
 - **Python debugger (debugpy)**: Python debugging uses the same interpreter as `Ctrl+Shift+R` (the selected one, a nearby `.venv`, or `python` on `PATH`), which needs `debugpy`: `python -m pip install debugpy`, or run **Python: Install debugpy** from the command palette. C/C++ files can be run but not yet debugged.
 - **Python**: For Python diagnostics and hover, install Node.js once (e.g. `winget install OpenJS.NodeJS.LTS`). LightLine automatically downloads and manages Pyright into `%APPDATA%\LightLine\pyright`. Run Python files with `Ctrl+Shift+R`, or debug them with `F5`.
 - **Prettier** (JS/TS/JSON/CSS/HTML/Markdown/YAML formatting): install `prettier` globally (`npm install -g prettier`) or have it available via `npx`. LightLine only detects it — it never installs or modifies anything outside its own extensions folder on your behalf.
+
+---
+
+## AI Assistant (optional)
+
+The AI Assistant (the sparkle in the activity rail) chats about your code with a model that runs **on your own PC** through [Ollama](https://ollama.com): free, private, and it works offline. It is off until you connect it. LightLine starts no AI process, downloads nothing and sends nothing on its own.
+
+1. Install Ollama from [ollama.com](https://ollama.com) and download a model, e.g. `ollama pull qwen2.5-coder:7b` (smaller PCs: `qwen2.5-coder:1.5b`).
+2. Open the AI Assistant and click **Connect to Ollama**. LightLine asks Ollama which models it has and picks a chat model made for code, never a cloud one.
+3. Type a question and press **Enter** (**Shift+Enter** for a new line). If code is selected in the editor, it is sent along; the panel shows which lines ("Includes app.rs, lines 40–82") before you send.
+
+Answers appear as they're written and are shown as Markdown; code blocks have a **Copy** button, and **Copy answer** copies the whole answer. **Esc** (or the square button) stops an answer, **+** starts a new chat, and the model name in the header switches models, refreshes the list or turns the assistant off.
+
+- **Other servers**: set `aiEndpoint` in `settings.json` to any OpenAI-compatible server, e.g. LM Studio (`http://localhost:1234`) or llama.cpp's server.
+- **Ollama's cloud models** (names ending in `cloud`, such as `gpt-oss:120b-cloud`) run on ollama.com, not on your PC. LightLine never picks one for you; if you choose one, the panel says your questions and code go to ollama.com.
 
 ---
 

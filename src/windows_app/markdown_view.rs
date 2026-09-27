@@ -226,6 +226,8 @@ struct Layout {
     items: Vec<Item>,
     links: Vec<(RECT, String)>,
     anchors: Vec<(String, i32)>,
+    // Each fenced code block's box and text (the chat's Copy buttons).
+    code_blocks: Vec<(RECT, String)>,
     height: i32,
     // Web images not shown because loading them hasn't been allowed.
     blocked: usize,
@@ -302,6 +304,9 @@ struct Layouter<'a> {
     fonts: &'a Fonts,
     images: &'a mut HashMap<String, Option<image_view::ImageAsset>>,
     downloads: &'a Arc<Downloads>,
+    // False for text that isn't a file (an AI answer): images are only
+    // described, never read from disk or downloaded.
+    load_images: bool,
     web_allowed: bool,
     blocked: usize,
     document_dir: PathBuf,
@@ -310,6 +315,7 @@ struct Layouter<'a> {
     items: Vec<Item>,
     links: Vec<(RECT, String)>,
     anchors: Vec<(String, i32)>,
+    code_blocks: Vec<(RECT, String)>,
 }
 
 impl Layouter<'_> {
@@ -596,6 +602,9 @@ impl Layouter<'_> {
         requested: Option<u32>,
         max_width: i32,
     ) -> Option<(String, i32, i32)> {
+        if !self.load_images {
+            return None;
+        }
         let (dpi, zoom) = (self.app.dpi, self.app.zoom);
         let density = dpi as f32 * zoom as f32 / 9600.0;
         let key = match markdown::resolve_link(url, &self.document_dir, &self.root) {
@@ -795,6 +804,15 @@ impl Layouter<'_> {
                 let height = lines.len() as i32 * line_height + 2 * pad;
                 let box_top = self.y;
                 self.fill(left, box_top, left + inner, box_top + height, Tone::CodeBg);
+                self.code_blocks.push((
+                    RECT {
+                        left,
+                        top: box_top,
+                        right: left + inner,
+                        bottom: box_top + height,
+                    },
+                    text.clone(),
+                ));
                 for (index, line) in lines.iter().enumerate() {
                     let line = line.replace('\t', "    ");
                     let line_width = self.measure(Font::Code, &line);
@@ -1203,6 +1221,7 @@ impl App {
                 fonts,
                 images,
                 downloads: &preview.downloads,
+                load_images: true,
                 web_allowed,
                 blocked: 0,
                 document_dir,
@@ -1211,6 +1230,7 @@ impl App {
                 items: Vec::new(),
                 links: Vec::new(),
                 anchors: Vec::new(),
+                code_blocks: Vec::new(),
             };
             for (index, block) in blocks.iter().enumerate() {
                 layouter.block(block, index == 0, width);
@@ -1221,6 +1241,7 @@ impl App {
                 items: layouter.items,
                 links: layouter.links,
                 anchors: layouter.anchors,
+                code_blocks: layouter.code_blocks,
                 blocked: layouter.blocked,
             });
         }
@@ -1240,6 +1261,47 @@ impl App {
             let saved = SaveDC(hdc);
             IntersectClipRect(hdc, bounds.left, bounds.top, bounds.right, bounds.bottom);
             SetBkMode(hdc, TRANSPARENT as i32);
+            self.paint_markdown_items(
+                hdc,
+                layout,
+                fonts,
+                &state.images,
+                (origin_x, origin_y),
+                bounds,
+            );
+            if let Some((bar, button)) = banner {
+                self.paint_markdown_banner(hdc, bar, button, layout.blocked);
+            }
+            if state.blocks.is_empty() {
+                SelectObject(hdc, self.ui_font);
+                let message = "Nothing to preview yet";
+                let x =
+                    bounds.left + (bounds.right - bounds.left - self.text_width(hdc, message)) / 2;
+                Self::label(
+                    hdc,
+                    message,
+                    x.max(bounds.left),
+                    bounds.top + (bounds.bottom - bounds.top) * 2 / 5,
+                    self.theme.muted,
+                    bounds,
+                );
+            }
+            RestoreDC(hdc, saved);
+        }
+    }
+
+    // Paints a laid-out document with its origin at `origin`, clipped to
+    // `bounds`; only items inside `bounds` are drawn.
+    fn paint_markdown_items(
+        &self,
+        hdc: HDC,
+        layout: &Layout,
+        fonts: &Fonts,
+        images: &HashMap<String, Option<image_view::ImageAsset>>,
+        (origin_x, origin_y): (i32, i32),
+        bounds: RECT,
+    ) {
+        unsafe {
             let visible = |top: i32, bottom: i32| {
                 bottom + origin_y >= bounds.top && top + origin_y <= bounds.bottom
             };
@@ -1316,7 +1378,7 @@ impl App {
                         }
                     }
                     Item::Image { rect, key } if visible(rect.top, rect.bottom) => {
-                        if let Some(Some(image)) = state.images.get(key) {
+                        if let Some(Some(image)) = images.get(key) {
                             image.draw(hdc, shift(rect));
                         }
                     }
@@ -1364,24 +1426,6 @@ impl App {
                     _ => {}
                 }
             }
-            if let Some((bar, button)) = banner {
-                self.paint_markdown_banner(hdc, bar, button, layout.blocked);
-            }
-            if state.blocks.is_empty() {
-                SelectObject(hdc, self.ui_font);
-                let message = "Nothing to preview yet";
-                let x =
-                    bounds.left + (bounds.right - bounds.left - self.text_width(hdc, message)) / 2;
-                Self::label(
-                    hdc,
-                    message,
-                    x.max(bounds.left),
-                    bounds.top + (bounds.bottom - bounds.top) * 2 / 5,
-                    self.theme.muted,
-                    bounds,
-                );
-            }
-            RestoreDC(hdc, saved);
         }
     }
 
@@ -1583,6 +1627,135 @@ impl App {
             }
         }
         unsafe { InvalidateRect(hwnd, null(), 0) };
+    }
+}
+
+/// Markdown that isn't a file -- an AI answer -- laid out once per width and
+/// painted anywhere. Images are described rather than loaded, and nothing
+/// is downloaded.
+#[derive(Default)]
+pub(super) struct MarkdownSnippet {
+    state: RefCell<SnippetState>,
+}
+
+#[derive(Default)]
+struct SnippetState {
+    // The revision of the text `blocks` were parsed from.
+    revision: Option<u64>,
+    blocks: Vec<Block>,
+    layout: Option<Layout>,
+}
+
+/// The fonts snippets are drawn with, shared by every snippet in a view and
+/// made again when the scale changes.
+#[derive(Default)]
+pub(super) struct SnippetFonts(RefCell<Option<Fonts>>);
+
+impl App {
+    fn snippet_fonts<'a>(&self, fonts: &'a SnippetFonts) -> std::cell::Ref<'a, Option<Fonts>> {
+        if fonts
+            .0
+            .borrow()
+            .as_ref()
+            .is_none_or(|current| current.scale != (self.dpi, self.zoom))
+        {
+            *fonts.0.borrow_mut() = Some(Fonts::new(self.dpi, self.zoom));
+        }
+        fonts.0.borrow()
+    }
+
+    /// Lays `text` out for `width` (again only when `revision`, the width or
+    /// the scale changed) and returns its height.
+    pub(super) fn snippet_height(
+        &self,
+        hdc: HDC,
+        snippet: &MarkdownSnippet,
+        fonts: &SnippetFonts,
+        (text, revision): (&str, u64),
+        width: i32,
+    ) -> i32 {
+        let fonts = self.snippet_fonts(fonts);
+        let Some(fonts) = fonts.as_ref() else {
+            return 0;
+        };
+        let mut state = snippet.state.borrow_mut();
+        if state.revision != Some(revision) {
+            state.blocks = markdown::parse(text);
+            state.revision = Some(revision);
+            state.layout = None;
+        }
+        let key = (width, self.dpi, self.zoom, 0, false);
+        if state.layout.as_ref().is_none_or(|layout| layout.key != key) {
+            let mut images = HashMap::new();
+            let downloads = Arc::default();
+            let mut layouter = Layouter {
+                app: self,
+                hdc,
+                fonts,
+                images: &mut images,
+                downloads: &downloads,
+                load_images: false,
+                web_allowed: false,
+                blocked: 0,
+                document_dir: PathBuf::new(),
+                root: PathBuf::new(),
+                y: 0,
+                items: Vec::new(),
+                links: Vec::new(),
+                anchors: Vec::new(),
+                code_blocks: Vec::new(),
+            };
+            for (index, block) in state.blocks.iter().enumerate() {
+                layouter.block(block, index == 0, width);
+            }
+            state.layout = Some(Layout {
+                key,
+                height: layouter.y,
+                items: layouter.items,
+                links: layouter.links,
+                anchors: layouter.anchors,
+                code_blocks: layouter.code_blocks,
+                blocked: 0,
+            });
+        }
+        state.layout.as_ref().map_or(0, |layout| layout.height)
+    }
+
+    /// Paints a snippet laid out by snippet_height with its top-left corner
+    /// at `origin`, clipped to `bounds`.
+    pub(super) fn paint_snippet(
+        &self,
+        hdc: HDC,
+        snippet: &MarkdownSnippet,
+        fonts: &SnippetFonts,
+        origin: (i32, i32),
+        bounds: RECT,
+    ) {
+        let fonts = fonts.0.borrow();
+        let state = snippet.state.borrow();
+        let (Some(fonts), Some(layout)) = (fonts.as_ref(), state.layout.as_ref()) else {
+            return;
+        };
+        unsafe {
+            let saved = SaveDC(hdc);
+            IntersectClipRect(hdc, bounds.left, bounds.top, bounds.right, bounds.bottom);
+            SetBkMode(hdc, TRANSPARENT as i32);
+            self.paint_markdown_items(hdc, layout, fonts, &HashMap::new(), origin, bounds);
+            RestoreDC(hdc, saved);
+        }
+    }
+}
+
+impl MarkdownSnippet {
+    /// The fenced code blocks of the last layout: each one's box (relative
+    /// to the snippet's top-left corner) and text.
+    pub(super) fn code_blocks(&self) -> Vec<(RECT, String)> {
+        self.state
+            .borrow()
+            .layout
+            .as_ref()
+            .map(|layout| layout.code_blocks.clone())
+            .unwrap_or_default()
     }
 }
 

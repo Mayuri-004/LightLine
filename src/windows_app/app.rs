@@ -552,6 +552,8 @@ pub(super) struct App {
     pub(super) directory_cache: HashMap<PathBuf, Vec<ExplorerEntry>>,
     pub(super) welcome: bool,
     pub(super) ai_assistant_visible: bool,
+    // The AI Assistant's conversation and message box (see ai_chat.rs).
+    pub(super) ai: AiChat,
     pub(super) side_view: SideView,
     pub(super) quick_open: bool,
     pub(super) quick_query: String,
@@ -1046,6 +1048,7 @@ impl App {
             directory_cache: HashMap::new(),
             welcome: true,
             ai_assistant_visible: false,
+            ai: AiChat::new(),
             side_view: SideView::Files,
             quick_open: false,
             quick_query: String::new(),
@@ -1689,6 +1692,13 @@ impl App {
     }
 
     pub(super) fn toggle_ai_assistant(&mut self, hwnd: HWND) {
+        // An opened assistant takes the keyboard, as a chat box does.
+        let opening = self.welcome || !self.ai_assistant_visible;
+        if opening && self.ai_ready() {
+            self.focus_ai_input();
+        } else {
+            self.ai.focused = false;
+        }
         if self.welcome {
             self.welcome = false;
             self.ai_assistant_visible = true;

@@ -225,14 +225,33 @@ unsafe extern "system" fn wnd_proc(
             app.poll_debug(hwnd);
             0
         }
+        AI_EVENT_MESSAGE => {
+            app.poll_ai(hwnd);
+            0
+        }
         WM_SETCURSOR if (lparam as u32 & 0xffff) == HTCLIENT => {
             unsafe {
                 let mut point = POINT::default();
                 GetCursorPos(&mut point);
                 ScreenToClient(hwnd, &mut point);
+                let over_ai = app.ai_assistant_visible
+                    && !app.welcome
+                    && !app.quick_open
+                    && point.x >= app.editor_right(hwnd);
+                let over_ai_input = over_ai
+                    && app.ai.hits.borrow().composer.is_some_and(|rect| {
+                        point.x >= rect.left
+                            && point.x < rect.right
+                            && point.y >= rect.top
+                            && point.y < rect.bottom
+                    });
                 let cursor = LoadCursorW(
                     null_mut(),
-                    if app.terminal_resizing
+                    if over_ai_input {
+                        IDC_IBEAM
+                    } else if over_ai {
+                        IDC_ARROW
+                    } else if app.terminal_resizing
                         || (app.terminal_visible
                             && (point.y - app.terminal_top(hwnd)).abs() <= app.scale(4))
                     {
@@ -399,9 +418,10 @@ unsafe extern "system" fn wnd_proc(
                 app.scroll_quick_open(hwnd, delta as i32);
                 return 0;
             }
-            // The Assistant panel has nothing to scroll, and the editor and
-            // terminal behind its column shouldn't move either.
+            // Over the Assistant panel the wheel scrolls the conversation,
+            // never the editor or terminal beside it.
             if app.ai_assistant_visible && !app.welcome && point.x >= app.editor_right(hwnd) {
+                app.ai_scroll(hwnd, delta as i32);
                 return 0;
             }
             let mut rect = RECT::default();

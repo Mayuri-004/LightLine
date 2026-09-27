@@ -1,3 +1,4 @@
+mod ai_chat;
 mod app;
 mod binary_view;
 mod builtin_icons;
@@ -21,6 +22,7 @@ mod debugger;
 use debugger::{DEBUG_EVENT_MESSAGE, DebugConfig};
 mod input;
 mod language;
+use ai_chat::{AI_EVENT_MESSAGE, AiChat};
 use language::LSP_EVENT_MESSAGE;
 use terminal::TERMINAL_EVENT_MESSAGE;
 mod render;
@@ -98,6 +100,8 @@ const EXPLORER_ROW: i32 = 27;
 const EXPLORER_TOP: i32 = 71;
 const RAIL_FIRST_ROW: i32 = 10;
 const RAIL_ROW: i32 = 52;
+// Height of the AI Assistant panel's header (title and close button).
+const AI_HEADER: i32 = 52;
 // Gutter between the floating side-panel / editor / terminal cards.
 const CARD_GAP: i32 = 1;
 const CARD_RADIUS: i32 = 4;
