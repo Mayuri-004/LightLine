@@ -56,6 +56,7 @@ impl App {
                 .unwrap_or(&folder)
                 .to_path_buf();
             self.workspace_root = Some(root.clone());
+            self.workspace_generation += 1;
             self.workspace_branch = Self::head_branch(&root);
             self.expanded_dirs.insert(root.clone());
             self.load_directory(&root);
@@ -86,6 +87,7 @@ impl App {
             return;
         }
         self.workspace_root = Some(root.clone());
+        self.workspace_generation += 1;
         if let Some(watcher) = &self.watcher {
             watcher.watch_directory(root.clone());
         }
@@ -165,6 +167,7 @@ impl App {
             return;
         }
         self.workspace_root = None;
+        self.workspace_generation += 1;
         self.workspace_branch = None;
         self.directory_cache.clear();
         self.expanded_dirs.clear();
@@ -224,6 +227,91 @@ impl App {
             old_path,
             buffer: String::new(),
         });
+        self.refresh(hwnd);
+    }
+
+    pub(super) fn add_file_to_project(&mut self, hwnd: HWND, parent: &Path) {
+        let Some(source) = self.pick_any_file(hwnd) else {
+            return;
+        };
+        let Some(file_name) = source.file_name() else {
+            self.status = "Invalid source file".into();
+            unsafe { InvalidateRect(hwnd, null(), 0) };
+            return;
+        };
+        let file_name_str = file_name.to_string_lossy().into_owned();
+        let target = parent.join(file_name);
+
+        if Self::same_path(&source, &target) {
+            self.status = "Source and destination files are identical".into();
+            unsafe { InvalidateRect(hwnd, null(), 0) };
+            return;
+        }
+
+        // The copy runs on a worker so a large file or a slow drive doesn't
+        // freeze the window; add_file_finished picks up the result.
+        self.status = format!("Adding {}...", file_name_str);
+        let parent = parent.to_path_buf();
+        let generation = self.workspace_generation;
+        let tx = self.worker_tx.clone();
+        self.worker_started(hwnd);
+        std::thread::spawn(move || {
+            let result = copy_new_file(&source, &target).map_err(|error| {
+                if error.kind() == io::ErrorKind::AlreadyExists {
+                    format!("File '{}' already exists", file_name_str)
+                } else {
+                    format!("Failed to add {}: {}", file_name_str, error)
+                }
+            });
+            let _ = tx.send(WorkerMessage::FileAdded(generation, parent, target, result));
+        });
+        unsafe { InvalidateRect(hwnd, null(), 0) };
+    }
+
+    pub(super) fn add_file_finished(
+        &mut self,
+        hwnd: HWND,
+        generation: u64,
+        parent: PathBuf,
+        target: PathBuf,
+        result: Result<(), String>,
+    ) {
+        // If the workspace was switched, reopened or closed during the copy,
+        // the user has moved on: the result mustn't change the status or the
+        // Explorer selection.
+        let same_session = generation == self.workspace_generation;
+        if let Err(error) = result {
+            if same_session {
+                self.status = error;
+            }
+            return;
+        }
+        // The new file is on disk either way. While its folder is in the open
+        // workspace (e.g. the same folder was reopened), the folder's
+        // listing and Git status still need refreshing so the file shows up.
+        if self
+            .workspace_root
+            .as_ref()
+            .is_some_and(|root| parent.starts_with(root))
+        {
+            self.directory_cache.remove(&parent);
+            if same_session {
+                self.expanded_dirs.insert(parent.clone());
+            }
+            if self.workspace_root.as_ref() == Some(&parent) || self.expanded_dirs.contains(&parent)
+            {
+                self.load_directory(&parent);
+            }
+            self.refresh_git(hwnd);
+        }
+        if same_session {
+            let name = target
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            self.status = format!("Added {}", name);
+            self.selected_explorer_path = Some(target);
+        }
         self.refresh(hwnd);
     }
 
@@ -477,5 +565,72 @@ impl App {
                 }
             }
         }
+    }
+}
+
+// Copies `source` to a new file `target`. The existence check is made by the
+// file system as `target` is created (create_new), so a file that appears
+// after the user picked the source is never overwritten. A copy that fails
+// part-way removes what it wrote rather than leaving a truncated file behind.
+fn copy_new_file(source: &Path, target: &Path) -> io::Result<()> {
+    let mut from = std::fs::File::open(source)?;
+    let mut to = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(target)?;
+    if let Err(error) = io::copy(&mut from, &mut to) {
+        drop(to);
+        let _ = std::fs::remove_file(target);
+        return Err(error);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "lightline-add-file-{}-{}",
+            name,
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn copy_new_file_copies_contents() {
+        let dir = scratch_dir("copy");
+        let source = dir.join("source.bin");
+        let target = dir.join("target.bin");
+        std::fs::write(&source, b"\x00binary\xffdata").unwrap();
+        copy_new_file(&source, &target).unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"\x00binary\xffdata");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn copy_new_file_never_overwrites_an_existing_file() {
+        let dir = scratch_dir("exists");
+        let source = dir.join("source.txt");
+        let target = dir.join("target.txt");
+        std::fs::write(&source, "new").unwrap();
+        std::fs::write(&target, "keep me").unwrap();
+        let error = copy_new_file(&source, &target).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "keep me");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn copy_new_file_leaves_nothing_when_the_source_is_missing() {
+        let dir = scratch_dir("missing");
+        let target = dir.join("target.txt");
+        assert!(copy_new_file(&dir.join("missing.txt"), &target).is_err());
+        assert!(!target.exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

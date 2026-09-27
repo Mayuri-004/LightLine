@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+#### Added
+- **Add File to Project** ([#54](https://github.com/mehmoodulhaq570/LightLine/pull/54)): Right-click a folder in the Explorer and choose **Add File...** to copy any file into it. A file of the same name is never overwritten, a failed copy leaves nothing behind, and large files copy in the background without freezing the window.
+
 ## [v0.2.0] - 2026-09-26
 
 ### 2026-09-26
