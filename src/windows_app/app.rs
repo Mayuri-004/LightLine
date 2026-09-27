@@ -1449,7 +1449,7 @@ impl App {
             return 0;
         }
         let preferred = self
-            .scale(360)
+            .scale(420)
             .min((rect.right - self.editor_left()) / 2)
             .max(self.scale(260));
         // Only the room the editor can spare, so in a narrow window the
