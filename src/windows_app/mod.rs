@@ -9,6 +9,7 @@ mod find_widget;
 mod git;
 mod image_view;
 mod markdown_view;
+mod more_menu;
 mod wrap;
 use markdown_view::{MARKDOWN_TIMER, MarkdownPreview};
 mod panels;
@@ -21,6 +22,7 @@ use app::{
     TerminalPane, TerminalTab, WorkerMessage, is_c_family_path, is_cpp_path,
 };
 use editor_context::{EditorContextDiagnostic, EditorContextMenu};
+use more_menu::MoreMenu;
 mod debugger;
 use debugger::{DEBUG_EVENT_MESSAGE, DebugConfig};
 mod input;

@@ -37,6 +37,9 @@ impl App {
         if self.editor_context_key(hwnd, key, ctrl, shift) {
             return true;
         }
+        if self.more_menu_key(hwnd, key) {
+            return true;
+        }
         if alt && key == 0x5A && !ctrl && !shift && !self.terminal_focus && !self.welcome {
             self.toggle_word_wrap(hwnd);
             return true;
@@ -1187,6 +1190,9 @@ impl App {
         if self.editor_context_click(hwnd, x, y) {
             return;
         }
+        if self.more_menu_click(hwnd, x, y) {
+            return;
+        }
         self.clear_hover(hwnd);
         let mut rect = RECT::default();
         unsafe {
@@ -1773,13 +1779,18 @@ impl App {
         // pane's edge, and a control the user can see should beat a drag.
         if y >= self.tab_strip_bottom() && y < self.editor_top() {
             for pane in 0..if self.split_visible { 2 } else { 1 } {
-                let (split, _) = self.pane_actions(self.pane_right(hwnd, pane));
+                let (split, more) = self.pane_actions(self.pane_right(hwnd, pane));
                 if self.tabs[self.tab_for_pane(pane)].is_placeholder() {
                     continue;
                 }
                 if x >= split.left && x < split.right {
                     self.focus_pane(hwnd, pane);
                     self.toggle_split(hwnd);
+                    return;
+                }
+                if x >= more.left && x < more.right {
+                    self.focus_pane(hwnd, pane);
+                    self.toggle_more_menu(hwnd, pane);
                     return;
                 }
             }

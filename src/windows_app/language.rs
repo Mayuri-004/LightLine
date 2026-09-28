@@ -609,7 +609,7 @@ impl App {
     }
 
     pub(super) fn mouse_hover_move(&mut self, hwnd: HWND, x: i32, y: i32) {
-        if self.editor_context_hover(hwnd, x, y) {
+        if self.editor_context_hover(hwnd, x, y) || self.more_menu_hover(hwnd, x, y) {
             return;
         }
         let mut rect = RECT::default();

@@ -1342,6 +1342,7 @@ impl App {
             self.paint_hover_card(hdc, rect, editor_bottom);
             self.paint_completion(hdc, rect, editor_bottom);
             self.paint_editor_context_menu(hdc, hwnd);
+            self.paint_more_menu(hdc, hwnd);
             SelectObject(hdc, old_font);
             if hdc != window_dc {
                 BitBlt(window_dc, 0, 0, rect.right, rect.bottom, hdc, 0, 0, SRCCOPY);

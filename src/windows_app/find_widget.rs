@@ -301,14 +301,9 @@ impl App {
             );
         }
         if shown.is_empty() {
-            self.label_mid(
-                hdc,
-                placeholder,
-                inner.left,
-                middle,
-                self.theme.muted,
-                inner,
-            );
+            // After the caret, so the caret doesn't cover its first letter.
+            let left = inner.left + if focused { s(5) } else { 0 };
+            self.label_mid(hdc, placeholder, left, middle, self.theme.muted, inner);
         } else {
             self.label_mid(hdc, shown, inner.left, middle, self.theme.text, inner);
         }

@@ -524,6 +524,8 @@ pub(super) struct App {
     // The editor's themed right-click menu. This is painted in the same
     // backbuffer as the workbench so installed color themes reach it too.
     pub(super) editor_context: Option<EditorContextMenu>,
+    // The menu behind a pane's "..." button.
+    pub(super) more_menu: Option<MoreMenu>,
     pub(super) dragging: bool,
     pub(super) find_mode: bool,
     pub(super) find_query: String,
@@ -1031,6 +1033,7 @@ impl App {
             focused: false,
             caret_on: true,
             editor_context: None,
+            more_menu: None,
             dragging: false,
             find_mode: false,
             find_query: String::new(),

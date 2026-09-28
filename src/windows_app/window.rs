@@ -156,6 +156,7 @@ unsafe extern "system" fn wnd_proc(
         WM_KILLFOCUS => {
             app.focused = false;
             app.dismiss_editor_context(hwnd);
+            app.dismiss_more_menu(hwnd);
             unsafe {
                 KillTimer(hwnd, 1);
             }
