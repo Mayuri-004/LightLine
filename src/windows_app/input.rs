@@ -1876,10 +1876,12 @@ impl App {
         }
         let pane_left = self.pane_left(hwnd, pane);
         if x < pane_left + self.scale(GUTTER) {
-            if x < pane_left + self.scale(24) {
-                self.toggle_breakpoint_at(hwnd, pane, y);
-            } else {
+            // Match the visual order: folding is the narrow first lane;
+            // breakpoint and line-number clicks use the remaining gutter.
+            if x < pane_left + self.scale(GUTTER_FOLD_LANE) {
                 self.toggle_fold_at(hwnd, pane, y);
+            } else {
+                self.toggle_breakpoint_at(hwnd, pane, y);
             }
             return;
         }

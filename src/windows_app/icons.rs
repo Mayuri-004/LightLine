@@ -69,8 +69,7 @@ pub(super) enum DebugGlyph {
     StepOut,
     Restart,
     Stop,
-    // Editor gutter markers.
-    Breakpoint,
+    // Editor gutter marker.
     ExecutionArrow,
 }
 
@@ -105,7 +104,6 @@ impl DebugGlyph {
             DebugGlyph::Restart => format!(
                 r#"<path {line} d="M21.35 5.2v5.1h-5.1"/><path {line} d="M19.12 14.55a7.65 7.65 0 1 1-1.8-7.96l4.03 3.71"/>"#
             ),
-            DebugGlyph::Breakpoint => format!(r#"<circle fill="{color}" cx="12" cy="12" r="9"/>"#),
             // The line execution is paused on, pointing into the code.
             DebugGlyph::ExecutionArrow => format!(
                 r#"<path fill="{color}" d="M3.5 7.2a1.7 1.7 0 0 1 1.7-1.7h8.6a1.7 1.7 0 0 1 1.25.55l5.1 5.35a.9.9 0 0 1 0 1.2l-5.1 5.35a1.7 1.7 0 0 1-1.25.55H5.2a1.7 1.7 0 0 1-1.7-1.7z"/>"#
@@ -426,7 +424,6 @@ mod icon_tests {
             DebugGlyph::StepOut,
             DebugGlyph::Restart,
             DebugGlyph::Stop,
-            DebugGlyph::Breakpoint,
             DebugGlyph::ExecutionArrow,
         ];
         for glyph in glyphs {

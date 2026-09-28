@@ -112,6 +112,7 @@ impl App {
             let git_added_brush = CreateSolidBrush(self.theme.green);
             let git_mod_brush = CreateSolidBrush(self.theme.blue);
             let git_del_brush = CreateSolidBrush(self.theme.error);
+            let breakpoint_brush = CreateSolidBrush(ui(255, 102, 112));
             let git_diff = doc.path.as_ref().and_then(|p| self.git_diff_cache.get(p));
             // The line a paused debug session stopped on in this file, marked
             // like VS Code: a yellow arrow in the breakpoint column and a
@@ -131,6 +132,18 @@ impl App {
             let columns = self.wrap_columns(hwnd, pane);
             let (mut index, mut first_row) = self.view_top(hwnd, pane);
             let mut screen_row = 0usize;
+            // A quiet boundary makes the three gutter lanes read as one
+            // compact control without visually merging into the source text.
+            Self::fill(
+                hdc,
+                RECT {
+                    left: left + self.scale(GUTTER) - self.scale(1).max(1),
+                    top: self.editor_top(),
+                    right: left + self.scale(GUTTER),
+                    bottom,
+                },
+                self.theme.edge,
+            );
             'lines: while screen_row < visible {
                 let source = doc.line(index);
                 let rows = super::super::wrap::layout_line(source, columns, self.settings.tab_size);
@@ -201,9 +214,10 @@ impl App {
                                 self.theme.line_number
                             },
                         );
-                        // Right-aligned against the fold column, leaving the
-                        // left of the gutter free for the breakpoint marker.
-                        let number_right = left + self.scale(GUTTER) - self.scale(18);
+                        // The number lane is last and right-aligned, after the
+                        // folding and breakpoint controls.
+                        let number_right =
+                            left + self.scale(GUTTER) - self.scale(GUTTER_NUMBER_RIGHT_INSET);
                         let number_clip = RECT {
                             left,
                             top: y,
@@ -220,26 +234,45 @@ impl App {
                             num.len() as u32,
                             null(),
                         );
-                        // Breakpoint dot; on the paused line a yellow arrow
-                        // instead, carrying a small dot when that line also
-                        // has a breakpoint.
-                        let marker_x = left + self.scale(10);
+                        // A crisp coral circle is easier to recognize than a
+                        // tiny rasterized glyph. On a paused line the yellow
+                        // execution arrow shares the same dedicated lane.
+                        let marker_x = left + self.scale(GUTTER_BREAKPOINT_CENTER);
                         let marker_y = y + self.line_height / 2;
-                        let red = ui(232, 72, 76);
-                        let marker = |glyph: DebugGlyph, color: u32, size: i32, shift: i32| {
-                            let (x, y) = (marker_x + shift - size / 2, marker_y - size / 2);
-                            self.icons.draw_glyph(hdc, glyph, color, x, y, size);
+                        let breakpoint = |diameter: i32, shift: i32| {
+                            let diameter = diameter.max(6);
+                            let center_x = marker_x + shift;
+                            let old_brush = SelectObject(hdc, breakpoint_brush);
+                            let old_pen = SelectObject(hdc, GetStockObject(NULL_PEN));
+                            Ellipse(
+                                hdc,
+                                center_x - diameter / 2,
+                                marker_y - diameter / 2,
+                                center_x + (diameter + 1) / 2,
+                                marker_y + (diameter + 1) / 2,
+                            );
+                            SelectObject(hdc, old_pen);
+                            SelectObject(hdc, old_brush);
                         };
                         if paused_here {
                             let yellow = ui(255, 204, 0);
-                            marker(DebugGlyph::ExecutionArrow, yellow, self.scale(18), 0);
+                            let size = self.scale(18);
+                            self.icons.draw_glyph(
+                                hdc,
+                                DebugGlyph::ExecutionArrow,
+                                yellow,
+                                marker_x - size / 2,
+                                marker_y - size / 2,
+                                size,
+                            );
                             if doc.has_breakpoint(index) {
-                                marker(DebugGlyph::Breakpoint, red, self.scale(9), -self.scale(1));
+                                breakpoint(self.scale(7), -self.scale(3));
                             }
                         } else if doc.has_breakpoint(index) {
-                            marker(DebugGlyph::Breakpoint, red, self.scale(14), 0);
+                            breakpoint(self.scale(9), 0);
                         }
-                        // Code folding chevron in gutter column
+                        // Folding is the first lane, separate from the
+                        // breakpoint target and the line number.
                         let is_folded = doc.is_folded_start(index).is_some();
                         let is_foldable = is_folded || doc.foldable_range(index).is_some();
                         if is_foldable {
@@ -248,7 +281,7 @@ impl App {
                             // ⌄ or ›, which rendered as an empty box.
                             self.chevron(
                                 hdc,
-                                left + self.scale(GUTTER) - self.scale(10),
+                                left + self.scale(GUTTER_FOLD_CENTER),
                                 y + self.line_height / 2,
                                 !is_folded,
                             );
@@ -482,6 +515,7 @@ impl App {
             DeleteObject(git_added_brush);
             DeleteObject(git_mod_brush);
             DeleteObject(git_del_brush);
+            DeleteObject(breakpoint_brush);
             // Bracket matching: highlight the matching bracket pair.
             if pane == self.focused_pane && !self.terminal_focus {
                 let match_brush = CreateSolidBrush(ui(60, 80, 120));

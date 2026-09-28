@@ -509,123 +509,153 @@ impl App {
         hits.model_turn_off = Some(turn_off);
     }
 
-    /// Compact provider marks for the model list. These are vector-drawn so
-    /// they stay sharp at every DPI and follow the active color theme; the
-    /// old letter tiles were only placeholders and made unrelated providers
-    /// look interchangeable.
+    /// Standalone provider marks matching the model-picker mockup: the logo
+    /// itself carries the identity, without a colored tile behind every icon.
+    /// They are vector-drawn so they stay sharp at every Windows DPI.
     fn paint_ai_model_icon(&self, hdc: HDC, rect: RECT, model: &str, cloud: bool) {
         let s = |value: i32| self.scale(value);
         let name = model.to_ascii_lowercase();
         let cx = (rect.left + rect.right) / 2;
         let cy = (rect.top + rect.bottom) / 2;
-        let (body, mark) = if name.starts_with("gpt") {
-            (ui(38, 94, 126), ui(225, 248, 250))
-        } else if name.starts_with("nemotron") {
-            (ui(92, 187, 50), ui(248, 255, 244))
-        } else if name.starts_with("qwen") {
-            (ui(86, 61, 190), ui(235, 229, 255))
-        } else if name.starts_with("llama") {
-            (ui(42, 112, 210), ui(236, 246, 255))
-        } else if name.starts_with("gemma") {
-            (ui(54, 48, 119), ui(221, 205, 255))
-        } else if cloud {
-            (ui(43, 91, 143), ui(226, 242, 255))
-        } else {
-            (ui(42, 50, 82), ui(197, 217, 244))
-        };
-        Self::rounded_fill(hdc, rect, s(6), body);
-
         unsafe {
-            let pen = CreatePen(PS_SOLID, s(1).max(1), mark);
+            if name.starts_with("qwen") {
+                // Six faceted ribbons form Qwen's purple hexagonal knot.
+                let outer = s(10) as f32;
+                let inner = s(5) as f32;
+                let colors = [
+                    ui(143, 92, 246),
+                    ui(126, 87, 238),
+                    ui(108, 92, 231),
+                    ui(126, 87, 238),
+                    ui(154, 101, 255),
+                    ui(139, 92, 246),
+                ];
+                let old_pen = SelectObject(hdc, GetStockObject(NULL_PEN));
+                let point = |angle: f32, radius: f32| POINT {
+                    x: cx + (angle.cos() * radius).round() as i32,
+                    y: cy + (angle.sin() * radius).round() as i32,
+                };
+                for (index, color) in colors.into_iter().enumerate() {
+                    let first =
+                        -std::f32::consts::FRAC_PI_2 + index as f32 * std::f32::consts::PI / 3.0;
+                    let second = first + std::f32::consts::PI / 3.0;
+                    let points = [
+                        point(first, outer),
+                        point(second, outer),
+                        point(second, inner),
+                        point(first, inner),
+                    ];
+                    let brush = CreateSolidBrush(color);
+                    let old_brush = SelectObject(hdc, brush);
+                    Polygon(hdc, points.as_ptr(), points.len() as i32);
+                    SelectObject(hdc, old_brush);
+                    DeleteObject(brush);
+                }
+                SelectObject(hdc, old_pen);
+                return;
+            }
+
+            if name.starts_with("gemma") {
+                // Compact multicolor Google G used by the Gemma family.
+                let segments = [
+                    (ui(66, 133, 244), (-7, -7, 7, -7)),
+                    (ui(234, 67, 53), (-7, -7, -9, 1)),
+                    (ui(251, 188, 5), (-9, 1, -4, 8)),
+                    (ui(52, 168, 83), (-4, 8, 7, 5)),
+                    (ui(66, 133, 244), (7, 5, 7, 0)),
+                ];
+                for (color, (x1, y1, x2, y2)) in segments {
+                    let pen = CreatePen(PS_SOLID, s(4).max(2), color);
+                    let old_pen = SelectObject(hdc, pen);
+                    MoveToEx(hdc, cx + s(x1), cy + s(y1), null_mut());
+                    LineTo(hdc, cx + s(x2), cy + s(y2));
+                    SelectObject(hdc, old_pen);
+                    DeleteObject(pen);
+                }
+                let blue = CreatePen(PS_SOLID, s(3).max(2), ui(66, 133, 244));
+                let old_pen = SelectObject(hdc, blue);
+                MoveToEx(hdc, cx, cy, null_mut());
+                LineTo(hdc, cx + s(9), cy);
+                SelectObject(hdc, old_pen);
+                DeleteObject(blue);
+                return;
+            }
+
+            let mark = if name.starts_with("nemotron") {
+                ui(118, 196, 38)
+            } else if name.starts_with("llama") {
+                ui(66, 133, 244)
+            } else if name.starts_with("gpt") {
+                self.theme.text
+            } else if cloud {
+                self.theme.sky
+            } else {
+                self.theme.violet
+            };
+            let pen = CreatePen(PS_SOLID, s(2).max(2), mark);
             if pen.is_null() {
                 return;
             }
             let old_pen = SelectObject(hdc, pen);
             let old_brush = SelectObject(hdc, GetStockObject(NULL_BRUSH));
             if name.starts_with("gpt") {
-                // Six overlapping loops suggest the OpenAI knot without a
-                // bitmap asset becoming blurry when Windows changes DPI.
-                let r = s(4);
+                // White six-loop OpenAI knot, free of a surrounding tile.
+                let r = s(3);
                 for (dx, dy) in [
-                    (0, -s(4)),
-                    (s(4), -s(2)),
-                    (s(4), s(2)),
-                    (0, s(4)),
-                    (-s(4), s(2)),
-                    (-s(4), -s(2)),
+                    (0, -s(5)),
+                    (s(5), -s(2)),
+                    (s(5), s(3)),
+                    (0, s(5)),
+                    (-s(5), s(3)),
+                    (-s(5), -s(2)),
                 ] {
                     Ellipse(hdc, cx + dx - r, cy + dy - r, cx + dx + r, cy + dy + r);
                 }
             } else if name.starts_with("nemotron") {
-                // NVIDIA-style eye: outer eye, inner iris and solid pupil.
-                Ellipse(
+                // NVIDIA eye and iris, plus the squared terminal stroke seen
+                // in the approved mockup.
+                Arc(
                     hdc,
-                    rect.left + s(4),
-                    cy - s(5),
-                    rect.right - s(4),
-                    cy + s(5),
+                    rect.left,
+                    cy - s(8),
+                    rect.right - s(2),
+                    cy + s(8),
+                    rect.right - s(2),
+                    cy,
+                    rect.left,
+                    cy,
                 );
-                Ellipse(hdc, cx - s(4), cy - s(4), cx + s(4), cy + s(4));
-                SelectObject(hdc, old_brush);
+                Ellipse(hdc, cx - s(5), cy - s(5), cx + s(5), cy + s(5));
                 let pupil = CreateSolidBrush(mark);
                 let prior = SelectObject(hdc, pupil);
                 Ellipse(hdc, cx - s(2), cy - s(2), cx + s(2), cy + s(2));
                 SelectObject(hdc, prior);
                 DeleteObject(pupil);
-                SelectObject(hdc, GetStockObject(NULL_BRUSH));
-            } else if name.starts_with("qwen") {
-                // Qwen's orbital Q reads clearly even at the 24px menu size.
-                Ellipse(hdc, cx - s(7), cy - s(7), cx + s(6), cy + s(6));
-                Ellipse(hdc, cx - s(3), cy - s(3), cx + s(3), cy + s(3));
-                MoveToEx(hdc, cx + s(3), cy + s(3), null_mut());
-                LineTo(hdc, cx + s(8), cy + s(8));
+                MoveToEx(hdc, rect.right - s(5), cy - s(6), null_mut());
+                LineTo(hdc, rect.right - s(1), cy - s(6));
+                LineTo(hdc, rect.right - s(1), cy + s(6));
+                LineTo(hdc, rect.right - s(5), cy + s(6));
             } else if name.starts_with("llama") {
-                // Meta/Llama infinity mark.
-                Ellipse(hdc, cx - s(8), cy - s(5), cx, cy + s(5));
-                Ellipse(hdc, cx, cy - s(5), cx + s(8), cy + s(5));
-                MoveToEx(hdc, cx - s(4), cy - s(3), null_mut());
-                LineTo(hdc, cx + s(4), cy + s(3));
-                MoveToEx(hdc, cx - s(4), cy + s(3), null_mut());
-                LineTo(hdc, cx + s(4), cy - s(3));
-            } else if name.starts_with("gemma") {
-                // Gemma's faceted diamond/star.
-                SelectObject(hdc, old_brush);
-                let brush = CreateSolidBrush(mark);
-                let prior = SelectObject(hdc, brush);
-                let diamond = [
-                    POINT {
-                        x: cx,
-                        y: cy - s(8),
-                    },
-                    POINT {
-                        x: cx + s(6),
-                        y: cy,
-                    },
-                    POINT {
-                        x: cx,
-                        y: cy + s(8),
-                    },
-                    POINT {
-                        x: cx - s(6),
-                        y: cy,
-                    },
-                ];
-                Polygon(hdc, diamond.as_ptr(), diamond.len() as i32);
-                SelectObject(hdc, prior);
-                DeleteObject(brush);
-                SelectObject(hdc, GetStockObject(NULL_BRUSH));
+                // Meta/Llama infinity mark, also standalone.
+                Ellipse(hdc, cx - s(10), cy - s(6), cx, cy + s(6));
+                Ellipse(hdc, cx, cy - s(6), cx + s(10), cy + s(6));
+                MoveToEx(hdc, cx - s(5), cy - s(4), null_mut());
+                LineTo(hdc, cx + s(5), cy + s(4));
+                MoveToEx(hdc, cx - s(5), cy + s(4), null_mut());
+                LineTo(hdc, cx + s(5), cy - s(4));
             } else if cloud {
                 // Generic cloud provider mark.
                 Ellipse(hdc, cx - s(7), cy - s(2), cx + s(7), cy + s(6));
                 Ellipse(hdc, cx - s(5), cy - s(7), cx + s(2), cy + s(3));
                 Ellipse(hdc, cx, cy - s(5), cx + s(6), cy + s(3));
             } else {
-                // Unknown local model: a small terminal prompt.
-                MoveToEx(hdc, cx - s(6), cy - s(4), null_mut());
-                LineTo(hdc, cx - s(2), cy);
-                LineTo(hdc, cx - s(6), cy + s(4));
-                MoveToEx(hdc, cx, cy + s(4), null_mut());
-                LineTo(hdc, cx + s(6), cy + s(4));
+                // Unknown local model: the same compact AI sparkle language
+                // as the rest of the assistant, with no background tile.
+                SelectObject(hdc, old_brush);
+                SelectObject(hdc, old_pen);
+                DeleteObject(pen);
+                self.sparkle_glyph(hdc, rect.left + s(3), rect.top + s(3), s(18), mark);
+                return;
             }
             SelectObject(hdc, old_brush);
             SelectObject(hdc, old_pen);

@@ -91,7 +91,14 @@ use windows_sys::Win32::UI::WindowsAndMessaging::*;
 const RAIL: i32 = 56;
 const SIDEBAR: i32 = 286;
 const WORKBENCH_HEADER: i32 = 50;
+// Editor gutter lanes, from left to right: folding, breakpoints, line numbers.
+// Keeping these positions shared also keeps pointer hit-testing aligned with
+// the painted controls at every DPI scale.
 const GUTTER: i32 = 62;
+const GUTTER_FOLD_LANE: i32 = 18;
+const GUTTER_FOLD_CENTER: i32 = 9;
+const GUTTER_BREAKPOINT_CENTER: i32 = 25;
+const GUTTER_NUMBER_RIGHT_INSET: i32 = 6;
 const TOP: i32 = 5;
 const STATUS: i32 = 29;
 const PAD: i32 = 10;
