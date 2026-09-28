@@ -42,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **No Stray "Untitled" Tab**: Opening a folder (or closing the last file) no longer shows an empty "Untitled" tab. The editor says no file is open and how to open one; `Ctrl+N` still creates a real Untitled file.
 
 #### Fixed
+- **Error and Warning Counts**: The status bar always showed `⊗ 0  ⚠ 0`, even with errors underlined in the editor. It now counts the errors and warnings in every open file, and clicking **Problems** in the panel header gives the same totals instead of always saying there are none.
 - **Run Button Hint**: Hovering the tab bar's Run button now shows "Run File (Ctrl+Shift+R)" in the status bar; it checked the wrong spot, so the hint never appeared.
 - **Replace All No Longer Hangs**: Replacing text with something that contains it (e.g. `foo` → `self.foo`) looped forever. Replace All now finds every match first and applies them as a single edit, which is also a single undo step.
 - **Fast Saves**: Saving wrote each line with its own system call; a 100,000-line file took about 2 seconds and now takes about 20 ms.

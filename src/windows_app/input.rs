@@ -1755,7 +1755,16 @@ impl App {
                     // shell session running, exactly like dismissing a dock.
                     TerminalHeaderHit::Hide => self.close_terminal(hwnd),
                     TerminalHeaderHit::Problems => {
-                        self.status = "No problems in the active workspace".into();
+                        let (errors, warnings) = self.problem_counts();
+                        self.status = if errors + warnings == 0 {
+                            "No problems in open files".into()
+                        } else {
+                            format!(
+                                "{errors} error{}, {warnings} warning{} in open files",
+                                if errors == 1 { "" } else { "s" },
+                                if warnings == 1 { "" } else { "s" }
+                            )
+                        };
                         self.refresh(hwnd);
                     }
                     TerminalHeaderHit::OutputTab => {

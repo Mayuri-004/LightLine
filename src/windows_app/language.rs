@@ -34,6 +34,11 @@ impl App {
         unsafe { InvalidateRect(hwnd, null(), 0) };
     }
 
+    /// Errors and warnings reported for every open file, for the status bar.
+    pub(super) fn problem_counts(&self) -> (usize, usize) {
+        problem_counts(self.tabs.iter().flat_map(|tab| &tab.diagnostics))
+    }
+
     pub(super) fn ensure_lsp(&mut self, hwnd: HWND) {
         let Some(language) = Tab::lsp_language(self.doc()) else {
             return;
@@ -1105,5 +1110,40 @@ impl App {
         if had {
             unsafe { InvalidateRect(hwnd, null(), 0) };
         }
+    }
+}
+
+// (errors, warnings) among `diagnostics`; hints and information aren't counted.
+fn problem_counts<'a>(diagnostics: impl Iterator<Item = &'a LspDiagnostic>) -> (usize, usize) {
+    diagnostics.fold((0, 0), |(errors, warnings), diagnostic| {
+        match diagnostic.severity {
+            1 => (errors + 1, warnings),
+            2 => (errors, warnings + 1),
+            _ => (errors, warnings),
+        }
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn diagnostic(severity: u8) -> LspDiagnostic {
+        let at = LspPosition {
+            line: 0,
+            character: 0,
+        };
+        LspDiagnostic {
+            range: LspRange { start: at, end: at },
+            severity,
+            message: String::new(),
+        }
+    }
+
+    #[test]
+    fn problem_counts_count_errors_and_warnings_only() {
+        let diagnostics: Vec<_> = [1, 2, 1, 3, 4, 2, 1].into_iter().map(diagnostic).collect();
+        assert_eq!(problem_counts(diagnostics.iter()), (3, 2));
+        assert_eq!(problem_counts([].iter()), (0, 0));
     }
 }
