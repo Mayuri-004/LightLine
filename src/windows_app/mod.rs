@@ -5,6 +5,7 @@ mod builtin_icons;
 mod dialog;
 mod editor_context;
 mod file_dialog;
+mod find_widget;
 mod git;
 mod image_view;
 mod markdown_view;

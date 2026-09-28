@@ -530,6 +530,13 @@ pub(super) struct App {
     pub(super) replace_mode: bool,
     pub(super) replace_query: String,
     pub(super) replace_field: usize,
+    // Where find-as-you-type searches from, and the (current, total) matches
+    // shown in the find box.
+    pub(super) find_origin: Pos,
+    pub(super) find_count: (usize, usize),
+    // The find text came from the selection and shows as selected: the
+    // first key typed replaces it.
+    pub(super) find_text_selected: bool,
     pub(super) pending_high_surrogate: Option<u16>,
     pub(super) explorer_visible: bool,
     pub(super) sidebar_width: i32,
@@ -1030,6 +1037,9 @@ impl App {
             replace_mode: false,
             replace_query: String::new(),
             replace_field: 0,
+            find_origin: Pos::default(),
+            find_count: (0, 0),
+            find_text_selected: false,
             pending_high_surrogate: None,
             explorer_visible: true,
             sidebar_width: SIDEBAR,
@@ -2267,7 +2277,9 @@ impl App {
 
     pub(super) fn find(&mut self, hwnd: HWND, forward: bool) {
         if self.find_query.is_empty() {
-            self.status = "Find: enter a query with Ctrl+F".into();
+            if !self.find_mode {
+                self.status = "Find: enter a query with Ctrl+F".into();
+            }
             self.refresh(hwnd);
             return;
         }
@@ -2288,11 +2300,18 @@ impl App {
             };
             self.view_mut().selection_anchor = Some(start);
             self.view_mut().cursor = end;
-            self.status = format!("Found: {}", self.find_query);
-        } else {
+            self.find_origin = start;
+            // The find box shows the count; F3 with the box closed has only
+            // the status bar.
+            if !self.find_mode {
+                self.status = format!("Found: {}", self.find_query);
+            }
+        } else if !self.find_mode {
             self.status = format!("Not found: {}", self.find_query);
         }
+        self.update_find_count();
         self.refresh(hwnd);
+        unsafe { InvalidateRect(hwnd, null(), 0) };
     }
 
     pub(super) fn replace_next(&mut self, hwnd: HWND) {
@@ -2326,19 +2345,10 @@ impl App {
             }
             None => 0,
         };
-        self.find_mode = false;
-        self.replace_mode = false;
         self.status = format!("Replaced {} occurrence(s) of '{}'", count, self.find_query);
+        self.update_find_count();
         self.refresh(hwnd);
-    }
-
-    pub(super) fn update_find_replace_status(&mut self) {
-        let f_marker = if self.replace_field == 0 { "> " } else { "  " };
-        let r_marker = if self.replace_field == 1 { "> " } else { "  " };
-        self.status = format!(
-            "{}Find: {} | {}Replace: {}  [Tab: switch, Enter: Replace Next, Alt+Enter: Replace All, Esc: Exit]",
-            f_marker, self.find_query, r_marker, self.replace_query
-        );
+        unsafe { InvalidateRect(hwnd, null(), 0) };
     }
 
     pub(super) fn poll_watcher(&mut self, hwnd: HWND) {

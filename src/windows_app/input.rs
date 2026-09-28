@@ -391,16 +391,23 @@ impl App {
         if self.find_mode {
             match key {
                 x if x == VK_ESCAPE as u32 => {
-                    self.find_mode = false;
-                    self.replace_mode = false;
-                    self.status = "Ready".into();
-                    self.refresh(hwnd);
+                    self.close_find(hwnd);
                     return true;
                 }
                 x if x == VK_TAB as u32 && self.replace_mode => {
                     self.replace_field = 1 - self.replace_field;
-                    self.update_find_replace_status();
-                    self.refresh(hwnd);
+                    unsafe { InvalidateRect(hwnd, null(), 0) };
+                    return true;
+                }
+                // Paste into the find box, not the document: its first line.
+                0x56 if ctrl => {
+                    match clipboard::paste(hwnd) {
+                        Ok(Some(text)) => {
+                            self.find_box_input(hwnd, Some(text.lines().next().unwrap_or("")))
+                        }
+                        Ok(None) => {}
+                        Err(error) => self.error(hwnd, &error),
+                    }
                     return true;
                 }
                 x if x == VK_RETURN as u32 => {
@@ -412,7 +419,6 @@ impl App {
                             self.replace_next(hwnd);
                         }
                     } else {
-                        self.find_mode = false;
                         self.find(hwnd, !shift);
                     }
                     return true;
@@ -493,15 +499,7 @@ impl App {
                     return true;
                 }
                 0x48 if !shift => {
-                    self.search_input = false;
-                    self.panel_focus = false;
-                    self.find_mode = true;
-                    self.replace_mode = true;
-                    self.find_query.clear();
-                    self.replace_query.clear();
-                    self.replace_field = 0;
-                    self.update_find_replace_status();
-                    self.refresh(hwnd);
+                    self.open_find(hwnd, true);
                     return true;
                 }
                 0x50 => {
@@ -582,11 +580,8 @@ impl App {
                     return true;
                 }
                 0x46 => {
-                    self.search_input = false;
-                    self.panel_focus = false;
-                    self.find_mode = true;
-                    self.find_query.clear();
-                    self.status = "Find: ".into();
+                    self.open_find(hwnd, false);
+                    return true;
                 }
                 0x42 => {
                     if self.side_view == SideView::Search {
@@ -739,7 +734,6 @@ impl App {
                 return true;
             }
             x if x == VK_F3 as u32 => {
-                self.find_mode = false;
                 self.find(hwnd, !shift);
                 return true;
             }
@@ -958,18 +952,7 @@ impl App {
         // Typing over the identifier closes the popup; Ctrl+Space re-opens it.
         self.dismiss_completion(hwnd);
         if self.find_mode && unit == 8 {
-            if self.replace_mode {
-                if self.replace_field == 0 {
-                    self.find_query.pop();
-                } else {
-                    self.replace_query.pop();
-                }
-                self.update_find_replace_status();
-            } else {
-                self.find_query.pop();
-                self.status = format!("Find: {}", self.find_query);
-            }
-            self.refresh(hwnd);
+            self.find_box_input(hwnd, None);
             return;
         }
         if self.find_mode && unit == 13 {
@@ -993,18 +976,7 @@ impl App {
         if let Some(ch) = ch {
             if self.find_mode {
                 if !ch.is_control() {
-                    if self.replace_mode {
-                        if self.replace_field == 0 {
-                            self.find_query.push(ch);
-                        } else {
-                            self.replace_query.push(ch);
-                        }
-                        self.update_find_replace_status();
-                    } else {
-                        self.find_query.push(ch);
-                        self.status = format!("Find: {}", self.find_query);
-                    }
-                    self.refresh(hwnd);
+                    self.find_box_input(hwnd, Some(ch.encode_utf8(&mut [0; 4])));
                 }
                 return;
             }
@@ -1859,6 +1831,9 @@ impl App {
             }
             return;
         }
+        if self.find_click(hwnd, x, y) {
+            return;
+        }
         if self.split_visible {
             let pane = usize::from(x >= self.pane_divider(hwnd));
             self.focus_pane(hwnd, pane);
@@ -1890,6 +1865,9 @@ impl App {
         self.terminal_focus = false;
         self.extensions_search_active = false;
         self.search_input = false;
+        // Typing goes back to the document, so the find box closes.
+        self.find_mode = false;
+        self.replace_mode = false;
         self.move_cursor(pos, extend);
         self.dragging = true;
         unsafe {

@@ -87,7 +87,8 @@ cargo run --release
 | `Ctrl+B` | Toggle sidebar (Explorer, Search, Git, Debug, Extensions) |
 | `Ctrl+Shift+D` | Toggle **Run & Debug** panel |
 | `Ctrl+Shift+X` | Toggle **Extensions** panel |
-| `Ctrl+F` | Find in current file (`F3` / `Shift+F3` next / previous) |
+| `Ctrl+F` | Find in current file: a find box opens at the top right and shows the match count; `Enter` / `Shift+Enter` (or `F3` / `Shift+F3`) next / previous, `Esc` closes |
+| `Ctrl+H` | Find and replace in current file: `Tab` switches fields, `Enter` replaces the current match, `Alt+Enter` replaces all (one `Ctrl+Z` undoes it) |
 | `Ctrl+Shift+F` | Search across workspace files; press `Enter` to move focus to the results |
 | `Up` / `Down` / `Enter` / `Esc` | In search results: move selection, open the selected match, or leave search |
 | `Ctrl+Shift+G` | **Source Control**: stage, commit, diff review |

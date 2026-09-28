@@ -1338,6 +1338,7 @@ impl App {
             }
             SelectObject(hdc, self.ui_font);
             self.paint_quick_open(hdc, rect);
+            self.paint_find_widget(hdc, hwnd);
             self.paint_hover_card(hdc, rect, editor_bottom);
             self.paint_completion(hdc, rect, editor_bottom);
             self.paint_editor_context_menu(hdc, hwnd);

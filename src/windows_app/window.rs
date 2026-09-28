@@ -333,6 +333,8 @@ unsafe extern "system" fn wnd_proc(
             let shift = unsafe { GetKeyState(VK_SHIFT as i32) } < 0;
             let routed = key == VK_F10 as u32
                 || (shift && key == 0x46)
+                // Alt+Enter: Replace All in the find box.
+                || (key == VK_RETURN as u32 && app.find_mode)
                 // Alt+Z: toggle word wrap, as in VS Code.
                 || (key == 0x5A && !shift && !app.terminal_focus)
                 || (app.terminal_focus

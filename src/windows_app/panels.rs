@@ -167,24 +167,8 @@ impl App {
                 Some(13) => self.format_document(hwnd),
                 Some(14) => self.trigger_completion(hwnd),
                 Some(16) => self.open_settings(hwnd),
-                Some(17) => {
-                    self.search_input = false;
-                    self.panel_focus = false;
-                    self.find_mode = true;
-                    self.replace_mode = false;
-                    self.find_query.clear();
-                    self.status = "Find: ".into();
-                }
-                Some(18) => {
-                    self.search_input = false;
-                    self.panel_focus = false;
-                    self.find_mode = true;
-                    self.replace_mode = true;
-                    self.find_query.clear();
-                    self.replace_query.clear();
-                    self.replace_field = 0;
-                    self.update_find_replace_status();
-                }
+                Some(17) => self.open_find(hwnd, false),
+                Some(18) => self.open_find(hwnd, true),
                 Some(19) => self.run_c_file(hwnd),
                 Some(21) => self.close_workspace(hwnd),
                 Some(22) => {
