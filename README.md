@@ -84,7 +84,7 @@ cargo run --release
 | `Ctrl+Shift+O` | Open Folder (Workspace) |
 | `Ctrl+\` | Split editor vertically / Unsplit |
 | `Ctrl+1` / `Ctrl+2` | Focus left or right split pane |
-| `Ctrl+B` | Toggle sidebar (Explorer, Search, Git, Debug, Extensions) |
+| `Ctrl+B` | Show or hide the side panel, keeping the view it shows (also the ☰ at the top of the left rail) |
 | `Ctrl+Shift+D` | Toggle **Run & Debug** panel |
 | `Ctrl+Shift+X` | Toggle **Extensions** panel |
 | `Ctrl+F` | Find in current file: a find box opens at the top right and shows the match count; `Enter` / `Shift+Enter` (or `F3` / `Shift+F3`) next / previous, `Esc` closes |

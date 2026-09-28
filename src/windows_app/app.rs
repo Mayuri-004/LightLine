@@ -518,6 +518,10 @@ pub(super) struct App {
     // cursor move) forces Windows to recompute the non-client frame each
     // time, which is what caused the reported flicker while typing.
     pub(super) scrollbar_visible: Option<bool>,
+    // The window title last set, for the same reason: setting it on every
+    // click and keystroke made Windows redraw the frame and tell the
+    // taskbar each time, even when it hadn't changed.
+    pub(super) title_shown: RefCell<String>,
     pub(super) transition: Option<Transition>,
     pub(super) status: String,
     pub(super) focused: bool,
@@ -1043,6 +1047,7 @@ impl App {
             scrollbar_visible: None,
             transition: None,
             status: "Ready".into(),
+            title_shown: RefCell::new(String::new()),
             focused: false,
             caret_on: true,
             editor_context: None,
@@ -1679,6 +1684,21 @@ impl App {
         unsafe { InvalidateRect(hwnd, null(), 0) };
     }
 
+    /// Shows or hides the side panel (Ctrl+B, the rail's ☰), keeping the
+    /// view it shows.
+    pub(super) fn toggle_sidebar(&mut self, hwnd: HWND) {
+        let visible = !self.explorer_visible;
+        if !visible {
+            // Typing goes back to the editor.
+            self.panel_focus = false;
+            self.search_input = false;
+            self.extensions_search_active = false;
+            self.commit_focus = false;
+        }
+        self.set_sidebar_visible(hwnd, visible);
+        self.show_active_tab(hwnd);
+    }
+
     pub(super) fn toggle_side_view(&mut self, hwnd: HWND, view: SideView) {
         if self.side_view == SideView::Search && view != SideView::Search {
             self.cancel_search();
@@ -1883,13 +1903,12 @@ impl App {
     pub(super) fn activate_tab(&mut self, hwnd: HWND, index: usize) {
         if index < self.tabs.len() {
             self.terminal_focus = false;
-            if self.side_view == SideView::Search {
-                self.cancel_search();
-            }
             if index != self.active {
                 self.start_transition(hwnd);
             }
-            self.side_view = SideView::Files;
+            // The side panel keeps its view: switching to Explorer here made
+            // opening a search result or a changed file (when already open)
+            // swap the whole panel and throw away the search.
             self.review_file = None;
             self.search_input = false;
             self.extensions_search_active = false;
@@ -2169,13 +2188,15 @@ impl App {
     }
 
     pub(super) fn update_title(&self, hwnd: HWND) {
-        if self.welcome || self.tab().is_placeholder() {
-            unsafe { SetWindowTextW(hwnd, wide("LightLine").as_ptr()) };
-            return;
-        }
-        let title = format!("{} — LightLine IDE", self.tab_label(self.active));
-        unsafe {
-            SetWindowTextW(hwnd, wide(&title).as_ptr());
+        let title = if self.welcome || self.tab().is_placeholder() {
+            "LightLine".to_string()
+        } else {
+            format!("{} — LightLine IDE", self.tab_label(self.active))
+        };
+        let mut shown = self.title_shown.borrow_mut();
+        if *shown != title {
+            unsafe { SetWindowTextW(hwnd, wide(&title).as_ptr()) };
+            *shown = title;
         }
     }
 

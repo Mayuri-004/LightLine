@@ -112,7 +112,10 @@ const BREADCRUMB_HEIGHT: i32 = 30;
 const TAB_WIDTH: i32 = 180;
 const EXPLORER_ROW: i32 = 27;
 const EXPLORER_TOP: i32 = 71;
-const RAIL_FIRST_ROW: i32 = 10;
+// The rail's ☰ (toggle the side panel) sits in the top row, where the
+// Welcome page's rail has Home, so the icons below line up on both.
+const RAIL_MENU_ROW: i32 = 18;
+const RAIL_FIRST_ROW: i32 = RAIL_MENU_ROW + RAIL_ROW;
 const RAIL_ROW: i32 = 52;
 // Height of the AI Assistant panel's header (title and close button).
 const AI_HEADER: i32 = 52;

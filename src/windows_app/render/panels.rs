@@ -16,6 +16,21 @@ impl App {
             SideView::Extensions => self.explorer_visible.then_some(4),
             SideView::Settings => None,
         };
+        // ☰: three bars, centered in the rail.
+        let bar_left = self.scale(RAIL / 2 - 9);
+        for bar in 0..3 {
+            let bar_top = self.scale(RAIL_MENU_ROW + 14 + bar * 6);
+            Self::fill(
+                hdc,
+                RECT {
+                    left: bar_left,
+                    top: bar_top,
+                    right: bar_left + self.scale(18),
+                    bottom: bar_top + self.scale(2).max(1),
+                },
+                self.theme.muted,
+            );
+        }
         for index in 0..6 {
             let top = self.scale(RAIL_FIRST_ROW + index as i32 * RAIL_ROW);
             let is_selected = selected == Some(index) || (index == 5 && self.ai_assistant_visible);

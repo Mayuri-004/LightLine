@@ -587,13 +587,7 @@ impl App {
                     return true;
                 }
                 0x42 => {
-                    if self.side_view == SideView::Search {
-                        self.cancel_search();
-                    }
-                    self.side_view = SideView::Files;
-                    self.panel_focus = false;
-                    self.set_sidebar_visible(hwnd, !self.explorer_visible);
-                    self.show_active_tab(hwnd);
+                    self.toggle_sidebar(hwnd);
                     return true;
                 }
                 0x4f => {
@@ -1338,7 +1332,11 @@ impl App {
             self.terminal_focus = false;
             let y = y - self.chrome_top();
             let panel_bottom = rect.bottom - self.chrome_top();
-            if y >= self.scale(RAIL_FIRST_ROW) && y < self.scale(RAIL_FIRST_ROW + RAIL_ROW * 6) {
+            if y >= self.scale(RAIL_MENU_ROW) && y < self.scale(RAIL_FIRST_ROW) {
+                self.toggle_sidebar(hwnd);
+            } else if y >= self.scale(RAIL_FIRST_ROW)
+                && y < self.scale(RAIL_FIRST_ROW + RAIL_ROW * 6)
+            {
                 let row = (y - self.scale(RAIL_FIRST_ROW)) / self.scale(RAIL_ROW).max(1);
                 match row {
                     0 => self.toggle_side_view(hwnd, SideView::Files),
