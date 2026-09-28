@@ -7,6 +7,7 @@ pub(super) enum SideView {
     Review,
     Debug,
     Extensions,
+    Settings,
 }
 
 // Output holds run/build results (cargo test, Run Python) in a dedicated
@@ -526,6 +527,8 @@ pub(super) struct App {
     pub(super) editor_context: Option<EditorContextMenu>,
     // The menu behind a pane's "..." button.
     pub(super) more_menu: Option<MoreMenu>,
+    // How far the Settings view in the side panel is scrolled, in pixels.
+    pub(super) settings_scroll: i32,
     pub(super) dragging: bool,
     pub(super) find_mode: bool,
     pub(super) find_query: String,
@@ -850,11 +853,21 @@ impl App {
         })
     }
 
-    pub(super) fn font_for_dpi(dpi: u32, zoom: i32) -> HFONT {
-        let font_name = wide(Self::code_font_family());
+    // The code font at `fontSize` pixels (at 100% scale) in `fontFamily`, or
+    // the default family when that isn't installed.
+    pub(super) fn font_for_dpi(
+        dpi: u32,
+        zoom: i32,
+        settings: &lightline::settings::Settings,
+    ) -> HFONT {
+        let family = match settings.font_family.as_deref().map(str::trim) {
+            Some(name) if !name.is_empty() && family_available(name) => name,
+            _ => Self::code_font_family(),
+        };
+        let font_name = wide(family);
         unsafe {
             CreateFontW(
-                -scaled(15, dpi, zoom),
+                -scaled(settings.font_size, dpi, zoom),
                 0,
                 0,
                 0,
@@ -993,13 +1006,13 @@ impl App {
     pub(super) fn new(hwnd: HWND, brand_icon: HICON, hero_icon: HICON) -> Self {
         let dpi = unsafe { GetDpiForWindow(hwnd) }.max(96);
         let zoom = 100;
-        let font = Self::font_for_dpi(dpi, zoom);
+        let settings = lightline::settings::Settings::load();
+        let font = Self::font_for_dpi(dpi, zoom, &settings);
         let line_height = Self::measured_line_height(font, dpi, zoom);
         let char_width = Self::measured_char_width(font, dpi, zoom);
         let (worker_tx, worker_rx) = mpsc::channel();
         let (lsp_tx, lsp_rx) = mpsc::channel();
         let (debug_tx, debug_rx) = mpsc::channel();
-        let settings = lightline::settings::Settings::load();
         // The theme settings.json chose, remembered across restarts.
         let (theme, active_color_theme) = Self::build_theme(&settings);
         super::theme::activate(&theme);
@@ -1034,6 +1047,7 @@ impl App {
             caret_on: true,
             editor_context: None,
             more_menu: None,
+            settings_scroll: 0,
             dragging: false,
             find_mode: false,
             find_query: String::new(),
@@ -1981,7 +1995,7 @@ impl App {
     }
 
     pub(super) fn set_metrics(&mut self, dpi: u32, zoom: i32) {
-        let font = Self::font_for_dpi(dpi, zoom);
+        let font = Self::font_for_dpi(dpi, zoom, &self.settings);
         let ui_font = Self::ui_font_for_dpi(dpi, zoom);
         let brand_font = Self::brand_font_for_dpi(dpi, zoom);
         let title_font = Self::title_font_for_dpi(dpi, zoom);

@@ -36,7 +36,7 @@
 - 🤖 **Local AI Assistant (optional)**: Ask about the selected code and get answers as they're written, from a model on your own PC through Ollama. Off until you connect it; nothing runs in the background or leaves your machine. See [AI Assistant](#ai-assistant-optional).
 - ▶️ **Multi-Language File Runner**: `Ctrl+Shift+R` runs the active Python, C/C++, or Rust file and streams its output into the Output pane. C/C++ files can be run but not yet debugged.
 - 🧩 **Real Zed Extensions & Icon Themes**: The redesigned Extensions panel (`Ctrl+Shift+X`) provides Marketplace/Installed tabs, live search, Featured/Themes/Formatters filters for the curated extensions, cards showing each extension's publisher, registry version and kind, and an Active Capabilities summary of the formatter and icon theme actually in use. It installs actual extensions from the live [Zed registry](https://github.com/zed-industries/extensions); installing a Zed **color theme** (e.g. Dracula) or the 1,000+ icon **Material Icon Theme** updates the editor immediately, with automatic fallback to the built-in vector icons when themes are removed.
-- ⚙️ **User Configuration**: JSON-backed settings at `%APPDATA%\LightLine\settings.json` (`Ctrl+,`) for fonts, indentation, colors, and behavior — including tab size, auto-indent, and format-on-save, all of which actually take effect.
+- ⚙️ **User Configuration**: a **Settings** panel (the gear at the bottom of the left rail, or `Ctrl+,`) for font size, indentation, word wrap, brackets, format-on-save, color theme and the default shell, all applied as you change them, backed by `%APPDATA%\LightLine\settings.json`.
 - 💾 **Session Restore**: Automatically reopens your last workspace, tabs, cursor positions, and scroll offsets on launch.
 
 ---
@@ -78,7 +78,7 @@ cargo run --release
 | Shortcut | Action |
 | --- | --- |
 | `Ctrl+P` | **Quick Open** files; type `>` for Command Palette |
-| `Ctrl+,` | **Open Settings** (`settings.json`) |
+| `Ctrl+,` | **Open Settings** (run `>Open Settings (JSON)` to edit `settings.json` directly) |
 | `Ctrl+N` / `Ctrl+W` | New tab / Close active tab |
 | `Ctrl+O` / `Ctrl+S` | Open file / Save active file |
 | `Ctrl+Shift+O` | Open Folder (Workspace) |
@@ -121,7 +121,9 @@ Keyboard focus follows the active surface. Search results and other sidebar list
 
 ## User Settings
 
-Open settings with **`Ctrl+,`** or run **`>Open Settings (JSON)`** from `Ctrl+P`. The file is stored at `%APPDATA%\LightLine\settings.json`; any field you omit keeps its default:
+Click the **gear** at the bottom of the left rail (or press **`Ctrl+,`**) to open **Settings** in the side panel. Changes apply at once and are saved to `%APPDATA%\LightLine\settings.json`; anything else in that file, such as `colors`, is kept.
+
+To edit the file directly, click **Open settings.json** at the bottom of the panel or run **`>Open Settings (JSON)`** from `Ctrl+P`; saving it applies it. Any field you omit keeps its default:
 
 ```json
 {
@@ -135,9 +137,6 @@ Open settings with **`Ctrl+,`** or run **`>Open Settings (JSON)`** from `Ctrl+P`
   "formatOnSave": false,
   "bracketMatching": true,
   "indentGuides": true,
-  "minimap": true,
-  "smoothScrolling": false,
-  "parseLimitKb": 128,
   "markdownLoadRemoteImages": false,
   "colorTheme": "Dracula",
   "aiEndpoint": "http://localhost:11434",
@@ -153,7 +152,7 @@ Open settings with **`Ctrl+,`** or run **`>Open Settings (JSON)`** from `Ctrl+P`
 }
 ```
 
-`tabSize`, `insertSpaces`, and `autoIndent` drive real editor behavior (indentation on Enter, tab-width rendering, the status bar's "Spaces: N" indicator) — they're not just stored. `formatOnSave` runs the active formatter (built-in for JSON/TOML, Prettier for web files) before every save. `colorTheme` names the installed color theme to use (a variant name such as `"Catppuccin Mocha"`; leave it out for LightLine's own theme) — **Preferences: Color Theme** in the command palette picks one and writes it here. `colors` overrides any of LightLine's core theme fields by name, on top of the color theme — the same fields a Zed color-theme extension maps onto (see below).
+`fontSize` (8–48) sets the code font's size and `fontFamily` its font, when that font is installed. `bracketMatching` and `indentGuides` turn those highlights on or off. `minimap`, `smoothScrolling` and `parseLimitKb` are accepted but don't do anything yet. `tabSize`, `insertSpaces`, and `autoIndent` drive real editor behavior (indentation on Enter, tab-width rendering, the status bar's "Spaces: N" indicator) — they're not just stored. `formatOnSave` runs the active formatter (built-in for JSON/TOML, Prettier for web files) before every save. `colorTheme` names the installed color theme to use (a variant name such as `"Catppuccin Mocha"`; leave it out for LightLine's own theme) — **Preferences: Color Theme** in the command palette picks one and writes it here. `colors` overrides any of LightLine's core theme fields by name, on top of the color theme — the same fields a Zed color-theme extension maps onto (see below).
 
 ---
 

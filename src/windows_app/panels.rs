@@ -77,6 +77,7 @@ impl App {
             ("Go to Definition", 12),
             ("Format Document", 13),
             ("Trigger Completion", 14),
+            ("Preferences: Open Settings (Ctrl+,)", 47),
             ("Open Settings (JSON)", 16),
             ("Find in File", 17),
             ("Find and Replace", 18),
@@ -167,6 +168,7 @@ impl App {
                 Some(13) => self.format_document(hwnd),
                 Some(14) => self.trigger_completion(hwnd),
                 Some(16) => self.open_settings(hwnd),
+                Some(47) => self.open_settings_panel(hwnd),
                 Some(17) => self.open_find(hwnd, false),
                 Some(18) => self.open_find(hwnd, true),
                 Some(19) => self.run_c_file(hwnd),
@@ -254,7 +256,13 @@ impl App {
     pub(super) fn reload_settings(&mut self) -> bool {
         match lightline::settings::Settings::try_load() {
             Ok(settings) => {
+                let font_changed = settings.font_size != self.settings.font_size
+                    || settings.font_family != self.settings.font_family;
                 self.settings = settings;
+                if font_changed {
+                    self.set_metrics(self.dpi, self.zoom);
+                    self.update_scrollbar(self.hwnd);
+                }
                 // The chosen theme and the colors overrides, as now saved
                 // (a hand edit of "colorTheme" switches theme too).
                 let (theme, extension) = Self::build_theme(&self.settings);

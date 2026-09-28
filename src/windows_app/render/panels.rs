@@ -14,6 +14,7 @@ impl App {
             SideView::Review => self.explorer_visible.then_some(2),
             SideView::Debug => self.explorer_visible.then_some(3),
             SideView::Extensions => self.explorer_visible.then_some(4),
+            SideView::Settings => None,
         };
         for index in 0..6 {
             let top = self.scale(RAIL_FIRST_ROW + index as i32 * RAIL_ROW);
@@ -76,12 +77,17 @@ impl App {
             self.theme.muted,
             clip,
         );
+        let settings_open = self.side_view == SideView::Settings && self.explorer_visible;
         Self::label(
             hdc,
             "⚙",
             self.scale(20),
             editor_bottom - self.scale(32),
-            self.theme.muted,
+            if settings_open {
+                ui(56, 189, 248)
+            } else {
+                self.theme.muted
+            },
             clip,
         );
         Self::label(
@@ -113,6 +119,7 @@ impl App {
             SideView::Review => "SOURCE CONTROL",
             SideView::Debug => "RUN & DEBUG",
             SideView::Extensions => "EXTENSIONS",
+            SideView::Settings => "SETTINGS",
         };
         Self::label(
             hdc,
@@ -162,6 +169,10 @@ impl App {
         );
         if self.side_view == SideView::Debug {
             self.paint_debug_panel(hdc, left, editor_left, editor_bottom, clip);
+            return;
+        }
+        if self.side_view == SideView::Settings {
+            self.paint_settings_panel(hdc, left, editor_left, editor_bottom);
             return;
         }
         if self.side_view == SideView::Extensions {

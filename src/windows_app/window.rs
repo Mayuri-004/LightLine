@@ -444,6 +444,10 @@ unsafe extern "system" fn wnd_proc(
                 if !app.explorer_visible {
                     return 0;
                 }
+                if app.side_view == SideView::Settings {
+                    app.scroll_settings_panel(hwnd, delta as i32);
+                    return 0;
+                }
                 if app.side_view != SideView::Files {
                     // Every list scrolls by whole rows, and the source control
                     // list mixes headers, files and commits, so its bound and

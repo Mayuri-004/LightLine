@@ -14,6 +14,7 @@ mod wrap;
 use markdown_view::{MARKDOWN_TIMER, MarkdownPreview};
 mod panels;
 mod session;
+mod settings_panel;
 mod terminal;
 mod workspace;
 use app::{

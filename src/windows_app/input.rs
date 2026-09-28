@@ -612,7 +612,7 @@ impl App {
                     return true;
                 }
                 x if x == VK_OEM_COMMA as u32 => {
-                    self.open_settings(hwnd);
+                    self.open_settings_panel(hwnd);
                     return true;
                 }
                 x if x == VK_TAB as u32 => {
@@ -1350,8 +1350,7 @@ impl App {
                     _ => {}
                 }
             } else if y >= panel_bottom - self.scale(STATUS + 40) {
-                self.status = "Settings are not available yet".into();
-                self.refresh(hwnd);
+                self.toggle_side_view(hwnd, SideView::Settings);
             }
             return;
         }
@@ -1405,6 +1404,12 @@ impl App {
                     self.collapse_all_folders(hwnd);
                     return;
                 }
+            }
+            if self.side_view == SideView::Settings {
+                if y >= self.scale(40) {
+                    self.settings_panel_click(hwnd, x, y);
+                }
+                return;
             }
             if self.side_view == SideView::Search {
                 if y >= self.scale(47) && y < self.scale(78) {

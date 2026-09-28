@@ -286,7 +286,8 @@ impl App {
                             .take(64)
                             .map(|ch| if ch == '\t' { 4 } else { 1 })
                             .sum::<usize>();
-                        for level in 1..=(indent_columns / 4).min(8) {
+                        let guides = if self.settings.indent_guides { 8 } else { 0 };
+                        for level in 1..=(indent_columns / 4).min(guides) {
                             let guide_x =
                                 code_left + level as i32 * 4 * space_width - self.scale(4);
                             if guide_x < right {
@@ -513,7 +514,7 @@ impl App {
             DeleteObject(git_mod_brush);
             DeleteObject(git_del_brush);
             // Bracket matching: highlight the matching bracket pair.
-            if pane == self.focused_pane && !self.terminal_focus {
+            if self.settings.bracket_matching && pane == self.focused_pane && !self.terminal_focus {
                 let match_brush = CreateSolidBrush(ui(60, 80, 120));
                 let bracket_at = |byte: usize, line_idx: usize| -> Option<(char, usize)> {
                     let text = doc.line(line_idx);

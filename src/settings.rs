@@ -98,8 +98,38 @@ impl Settings {
         let dir = Self::settings_dir().ok_or("Could not determine settings directory")?;
         std::fs::create_dir_all(&dir).map_err(|e| format!("Could not create settings dir: {e}"))?;
         let path = dir.join("settings.json");
-        let json = self.to_json();
+        let existing = match std::fs::read_to_string(&path) {
+            Ok(text) => Some(text),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => return Err(format!("Could not read settings.json: {e}")),
+        };
+        let json = self.merged_json(existing.as_deref())?;
         std::fs::write(&path, json).map_err(|e| format!("Could not write settings: {e}"))
+    }
+
+    /// The settings file's text `existing` with these settings written over
+    /// LightLine's own keys. Every other key, such as "colors", is kept as it
+    /// was: saving used to rewrite the file from scratch and drop them. A file
+    /// that isn't valid JSON is left alone rather than replaced, so a hand
+    /// edit with a typo in it isn't lost.
+    fn merged_json(&self, existing: Option<&str>) -> Result<String, String> {
+        let existing = existing.filter(|text| !text.trim().is_empty());
+        let mut obj = match existing.map(serde_json::from_str::<serde_json::Value>) {
+            None => serde_json::Map::new(),
+            Some(Ok(serde_json::Value::Object(obj))) => obj,
+            Some(_) => {
+                return Err(
+                    "settings.json has an error, so it wasn't changed. Fix it with Open Settings (JSON)"
+                        .into(),
+                );
+            }
+        };
+        // Keys left unset (no color theme, no model) must go, not linger.
+        for key in OWN_KEYS {
+            obj.remove(*key);
+        }
+        obj.extend(self.to_object());
+        Ok(serde_json::to_string_pretty(&serde_json::Value::Object(obj)).unwrap_or_default())
     }
 
     fn parse(text: &str) -> Result<Self, String> {
@@ -194,7 +224,13 @@ impl Settings {
         Ok(settings)
     }
 
+    #[cfg(test)]
     fn to_json(&self) -> String {
+        serde_json::to_string_pretty(&serde_json::Value::Object(self.to_object()))
+            .unwrap_or_default()
+    }
+
+    fn to_object(&self) -> serde_json::Map<String, serde_json::Value> {
         let mut obj = serde_json::Map::new();
         if let Some(ref family) = self.font_family {
             obj.insert(
@@ -262,9 +298,31 @@ impl Settings {
             "terminalDefaultProfile".into(),
             serde_json::Value::String(self.default_terminal_profile.name().to_string()),
         );
-        serde_json::to_string_pretty(&serde_json::Value::Object(obj)).unwrap_or_default()
+        obj
     }
 }
+
+// Every key `to_object` can write.
+const OWN_KEYS: &[&str] = &[
+    "fontFamily",
+    "fontSize",
+    "tabSize",
+    "insertSpaces",
+    "wordWrap",
+    "autoClosePairs",
+    "autoIndent",
+    "formatOnSave",
+    "bracketMatching",
+    "indentGuides",
+    "minimap",
+    "smoothScrolling",
+    "parseLimitKb",
+    "colorTheme",
+    "aiEndpoint",
+    "aiModel",
+    "markdownLoadRemoteImages",
+    "terminalDefaultProfile",
+];
 
 /// Parse a CSS-style hex color string like "#1c2b3f" or "1c2b3f" into a Win32
 /// COLORREF (0x00BBGGRR).
@@ -303,6 +361,51 @@ mod tests {
         };
         let loaded = Settings::parse(&s.to_json()).unwrap();
         assert!(loaded.format_on_save);
+    }
+
+    #[test]
+    fn saving_keeps_colors_and_unknown_keys() {
+        let existing = r##"{"colors": {"text": "#d8dee9"}, "myKey": 1, "fontSize": 20}"##;
+        let s = Settings {
+            font_size: 16,
+            ..Settings::default()
+        };
+        let saved: serde_json::Value =
+            serde_json::from_str(&s.merged_json(Some(existing)).unwrap()).unwrap();
+        assert_eq!(saved["colors"]["text"], "#d8dee9");
+        assert_eq!(saved["myKey"], 1);
+        assert_eq!(saved["fontSize"], 16);
+        assert_eq!(Settings::parse(&saved.to_string()).unwrap().colors.len(), 1);
+    }
+
+    #[test]
+    fn saving_removes_settings_that_were_unset() {
+        let existing = r#"{"colorTheme": "Dracula", "aiModel": "llama3.2:1b"}"#;
+        let saved: serde_json::Value =
+            serde_json::from_str(&Settings::default().merged_json(Some(existing)).unwrap())
+                .unwrap();
+        assert!(saved.get("colorTheme").is_none());
+        assert!(saved.get("aiModel").is_none());
+    }
+
+    #[test]
+    fn saving_leaves_a_broken_file_alone() {
+        let settings = Settings::default();
+        assert!(
+            settings
+                .merged_json(Some("{ \"fontSize\": 14,, }"))
+                .is_err()
+        );
+        assert!(settings.merged_json(Some("[1, 2]")).is_err());
+        assert!(
+            settings
+                .merged_json(Some(
+                    "  
+"
+                ))
+                .is_ok()
+        );
+        assert!(settings.merged_json(None).is_ok());
     }
 
     #[test]
