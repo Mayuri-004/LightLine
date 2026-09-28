@@ -112,7 +112,6 @@ impl App {
             let git_added_brush = CreateSolidBrush(self.theme.green);
             let git_mod_brush = CreateSolidBrush(self.theme.blue);
             let git_del_brush = CreateSolidBrush(self.theme.error);
-            let breakpoint_brush = CreateSolidBrush(ui(255, 102, 112));
             let git_diff = doc.path.as_ref().and_then(|p| self.git_diff_cache.get(p));
             // The line a paused debug session stopped on in this file, marked
             // like VS Code: a yellow arrow in the breakpoint column and a
@@ -234,25 +233,20 @@ impl App {
                             num.len() as u32,
                             null(),
                         );
-                        // A crisp coral circle is easier to recognize than a
-                        // tiny rasterized glyph. On a paused line the yellow
-                        // execution arrow shares the same dedicated lane.
+                        // Breakpoint dots use the anti-aliased SVG path so
+                        // their small circles stay clean at every DPI scale.
                         let marker_x = left + self.scale(GUTTER_BREAKPOINT_CENTER);
                         let marker_y = y + self.line_height / 2;
-                        let breakpoint = |diameter: i32, shift: i32| {
-                            let diameter = diameter.max(6);
+                        let breakpoint = |size: i32, shift: i32| {
                             let center_x = marker_x + shift;
-                            let old_brush = SelectObject(hdc, breakpoint_brush);
-                            let old_pen = SelectObject(hdc, GetStockObject(NULL_PEN));
-                            Ellipse(
+                            self.icons.draw_glyph(
                                 hdc,
-                                center_x - diameter / 2,
-                                marker_y - diameter / 2,
-                                center_x + (diameter + 1) / 2,
-                                marker_y + (diameter + 1) / 2,
+                                DebugGlyph::GutterDot,
+                                ui(246, 110, 120),
+                                center_x - size / 2,
+                                marker_y - size / 2,
+                                size,
                             );
-                            SelectObject(hdc, old_pen);
-                            SelectObject(hdc, old_brush);
                         };
                         if paused_here {
                             let yellow = ui(255, 204, 0);
@@ -266,10 +260,10 @@ impl App {
                                 size,
                             );
                             if doc.has_breakpoint(index) {
-                                breakpoint(self.scale(7), -self.scale(3));
+                                breakpoint(self.scale(10), -self.scale(3));
                             }
                         } else if doc.has_breakpoint(index) {
-                            breakpoint(self.scale(9), 0);
+                            breakpoint(self.scale(14), 0);
                         }
                         // Folding is the first lane, separate from the
                         // breakpoint target and the line number.
@@ -467,15 +461,18 @@ impl App {
                         }
                         .max(start_byte);
                         if row == 0 {
-                            Self::fill(
+                            // Diagnostics have their own lane and use the
+                            // anti-aliased dot also used for breakpoints.
+                            let center_x = left + self.scale(GUTTER_DIAGNOSTIC_CENTER);
+                            let center_y = y + self.line_height / 2;
+                            let size = self.scale(14);
+                            self.icons.draw_glyph(
                                 hdc,
-                                RECT {
-                                    left: left + self.scale(48),
-                                    top: y + self.line_height / 2 - self.scale(3),
-                                    right: left + self.scale(54),
-                                    bottom: y + self.line_height / 2 + self.scale(3),
-                                },
+                                DebugGlyph::GutterDot,
                                 color,
+                                center_x - size / 2,
+                                center_y - size / 2,
+                                size,
                             );
                         }
                         // Underlined on each row the problem reaches; an
@@ -515,7 +512,6 @@ impl App {
             DeleteObject(git_added_brush);
             DeleteObject(git_mod_brush);
             DeleteObject(git_del_brush);
-            DeleteObject(breakpoint_brush);
             // Bracket matching: highlight the matching bracket pair.
             if pane == self.focused_pane && !self.terminal_focus {
                 let match_brush = CreateSolidBrush(ui(60, 80, 120));
