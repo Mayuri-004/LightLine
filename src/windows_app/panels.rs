@@ -261,7 +261,6 @@ impl App {
                 self.settings = settings;
                 if font_changed {
                     self.set_metrics(self.dpi, self.zoom);
-                    self.update_scrollbar(self.hwnd);
                 }
                 // The chosen theme and the colors overrides, as now saved
                 // (a hand edit of "colorTheme" switches theme too).

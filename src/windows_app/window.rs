@@ -287,6 +287,8 @@ unsafe extern "system" fn wnd_proc(
                         IDC_SIZEWE
                     } else if app.welcome
                         || app.quick_open
+                        || app.scrollbar_grab.is_some()
+                        || app.scrollbar_at(hwnd, point.x, point.y).is_some()
                         || (app.side_view == SideView::Review && app.review_file.is_some())
                         || point.y < app.editor_top()
                         || point.x < app.editor_left()
@@ -388,6 +390,7 @@ unsafe extern "system" fn wnd_proc(
         }
         WM_MOUSEMOVE => {
             if (app.dragging
+                || app.scrollbar_grab.is_some()
                 || app.divider_dragging
                 || app.sidebar_dragging
                 || app.terminal_resizing
@@ -409,6 +412,20 @@ unsafe extern "system" fn wnd_proc(
             0
         }
         WM_LBUTTONUP => {
+            if app.scrollbar_grab.take().is_some() {
+                app.invalidate_scrollbar(hwnd, app.focused_pane);
+                // Released away from the scrollbar, it's no longer under the
+                // mouse; the move that would say so came while it was held.
+                // Released on it, it is, and the mouse capture may have ended
+                // the watch for the mouse leaving the window: set it again.
+                let over = app.scrollbar_at(
+                    hwnd,
+                    (lparam as u32 & 0xffff) as i16 as i32,
+                    ((lparam as u32 >> 16) & 0xffff) as i16 as i32,
+                );
+                app.scrollbar_hover = None;
+                app.set_scrollbar_hover(hwnd, over);
+            }
             app.dragging = false;
             app.divider_dragging = false;
             app.sidebar_dragging = false;
@@ -419,6 +436,10 @@ unsafe extern "system" fn wnd_proc(
             unsafe {
                 ReleaseCapture();
             }
+            0
+        }
+        WM_MOUSELEAVE => {
+            app.set_scrollbar_hover(hwnd, None);
             0
         }
         WM_RBUTTONUP => {
@@ -539,41 +560,6 @@ unsafe extern "system" fn wnd_proc(
                 let rows = if delta > 0 { -3 } else { 3 };
                 app.scroll_rows(hwnd, rows);
             }
-            app.update_scrollbar(hwnd);
-            unsafe {
-                InvalidateRect(hwnd, null(), 0);
-            }
-            0
-        }
-        WM_VSCROLL => {
-            let code = (wparam & 0xffff) as i32;
-            let max = app.doc().line_count().saturating_sub(1);
-            let page = app.visible_lines(hwnd) as isize;
-            match code {
-                SB_LINEUP => app.scroll_rows(hwnd, -1),
-                SB_LINEDOWN => app.scroll_rows(hwnd, 1),
-                SB_PAGEUP => app.scroll_rows(hwnd, -page),
-                SB_PAGEDOWN => app.scroll_rows(hwnd, page),
-                SB_THUMBPOSITION | SB_THUMBTRACK => {
-                    let mut info = SCROLLINFO {
-                        cbSize: size_of::<SCROLLINFO>() as u32,
-                        fMask: SIF_TRACKPOS,
-                        ..unsafe { zeroed() }
-                    };
-                    unsafe {
-                        GetScrollInfo(hwnd, SB_VERT, &mut info);
-                    }
-                    // The scrollbar counts document lines (visible ones, see
-                    // update_scrollbar), so a drag lands on a line's first row.
-                    let line = app
-                        .doc()
-                        .line_at_visual_index(info.nTrackPos.max(0) as usize)
-                        .min(max);
-                    app.set_view_top((line, 0));
-                }
-                _ => {}
-            }
-            app.update_scrollbar(hwnd);
             unsafe {
                 InvalidateRect(hwnd, null(), 0);
             }
@@ -627,7 +613,7 @@ pub fn run() -> io::Result<()> {
             WS_EX_APPWINDOW,
             class.as_ptr(),
             wide("LightLine").as_ptr(),
-            WS_THICKFRAME | WS_VSCROLL,
+            WS_THICKFRAME,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
             1000,
@@ -659,7 +645,6 @@ pub fn run() -> io::Result<()> {
         );
         connect_parent_console(hwnd);
         app.borrow().update_title(hwnd);
-        app.borrow_mut().update_scrollbar(hwnd);
         ShowWindow(hwnd, SW_SHOW);
         SetFocus(hwnd);
         SetTimer(hwnd, 7, 1000, None);

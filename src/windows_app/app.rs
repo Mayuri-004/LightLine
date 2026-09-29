@@ -531,12 +531,11 @@ pub(super) struct App {
     pub(super) zoom: i32,
     pub(super) line_height: i32,
     pub(super) backbuffer: Option<Surface>,
-    // Tracks the native scrollbar's last ShowScrollBar state so
-    // update_scrollbar only calls it on an actual change. Calling
-    // ShowScrollBar every keystroke (it used to run unconditionally on every
-    // cursor move) forces Windows to recompute the non-client frame each
-    // time, which is what caused the reported flicker while typing.
-    pub(super) scrollbar_visible: Option<bool>,
+    // While the editor's scrollbar slider is held: the mouse's y when it was
+    // pressed, and the visible line then at the top (see scrollbar_drag).
+    pub(super) scrollbar_grab: Option<(i32, usize)>,
+    // The pane whose scrollbar is under the mouse, drawn lighter.
+    pub(super) scrollbar_hover: Option<usize>,
     // The window title last set, for the same reason: setting it on every
     // click and keystroke made Windows redraw the frame and tell the
     // taskbar each time, even when it hadn't changed.
@@ -1063,7 +1062,8 @@ impl App {
             zoom,
             line_height,
             backbuffer: None,
-            scrollbar_visible: None,
+            scrollbar_grab: None,
+            scrollbar_hover: None,
             transition: None,
             status: "Ready".into(),
             title_shown: RefCell::new(String::new()),
@@ -1539,7 +1539,6 @@ impl App {
         let right = self.editor_right(hwnd);
         let width = (right - self.editor_left()).max(1);
         self.split_ratio = (((x - self.editor_left()) * 100) / width).clamp(10, 90);
-        self.update_scrollbar(hwnd);
         unsafe { InvalidateRect(hwnd, null(), 0) };
     }
 
@@ -1781,7 +1780,6 @@ impl App {
         // editor's state alone (show_active_tab would close them).
         self.clear_hover(hwnd);
         self.keep_active_tab_visible(hwnd);
-        self.update_scrollbar(hwnd);
         unsafe { InvalidateRect(hwnd, null(), 0) };
     }
 
@@ -1798,7 +1796,6 @@ impl App {
         self.terminal_focus = false;
         self.find_mode = false;
         self.update_title(hwnd);
-        self.update_scrollbar(hwnd);
         unsafe { InvalidateRect(hwnd, null(), 0) };
     }
 
@@ -1914,7 +1911,6 @@ impl App {
         self.replace_mode = false;
         self.dragging = false;
         self.update_title(hwnd);
-        self.update_scrollbar(hwnd);
         self.advance_syntax(hwnd);
         self.ensure_lsp(hwnd);
         self.refresh_active_git_diff(hwnd);
@@ -2036,7 +2032,6 @@ impl App {
         }
         self.status = format!("Zoom: {}%", self.zoom);
         self.keep_cursor_visible(hwnd);
-        self.update_scrollbar(hwnd);
         unsafe { InvalidateRect(hwnd, null(), 0) };
     }
 
@@ -2141,39 +2136,144 @@ impl App {
             .max(1) as usize
     }
 
-    pub(super) fn update_scrollbar(&mut self, hwnd: HWND) {
-        // The vertical scrollbar is a permanent window-style feature (WS_VSCROLL),
-        // so it stays visible with whatever thumb was last set for the editor
-        // unless explicitly hidden here — it must not bleed into the welcome pane.
-        let show = !self.welcome;
-        if self.scrollbar_visible != Some(show) {
-            unsafe { ShowScrollBar(hwnd, SB_VERT, show as i32) };
-            self.scrollbar_visible = Some(show);
+    /// `pane`'s scrollbar, as VS Code draws it: the track down the right edge
+    /// of its code, and the slider in it, sized to the share of the file on
+    /// screen. None for panes that aren't code (images, Markdown previews,
+    /// the diff view) and for one-line files. It counts lines as scrolling
+    /// does: a folded block is one, and so is a wrapped line.
+    pub(super) fn scrollbar(&self, hwnd: HWND, pane: usize) -> Option<(RECT, RECT)> {
+        let tab = &self.tabs[self.tab_for_pane(pane)];
+        if self.welcome
+            || tab.image.is_some()
+            || tab.markdown.is_some()
+            || tab.is_placeholder()
+            || (self.side_view == SideView::Review && self.review_file.is_some())
+        {
+            return None;
         }
-        if !show {
+        let last = tab.document.visible_line_count().saturating_sub(1);
+        let right = self.pane_right(hwnd, pane);
+        let track = RECT {
+            left: right - self.scale(SCROLLBAR),
+            top: self.editor_top(),
+            right,
+            bottom: self.editor_area(hwnd, false).bottom,
+        };
+        let height = track.bottom - track.top;
+        if last == 0 || height <= 0 {
+            return None;
+        }
+        // The last line can scroll up to the top, so the file takes a page
+        // more than its own length.
+        let page = self.visible_lines(hwnd);
+        let length = ((height as usize * page / (last + page)) as i32)
+            .clamp(self.scale(20).min(height), height);
+        let top_index = tab
+            .document
+            .visual_index(self.view_top(hwnd, pane).0)
+            .min(last);
+        let top = track.top + ((height - length) as usize * top_index / last) as i32;
+        Some((
+            track,
+            RECT {
+                top,
+                bottom: top + length,
+                ..track
+            },
+        ))
+    }
+
+    /// The code pane whose scrollbar is at (`x`, `y`).
+    pub(super) fn scrollbar_at(&self, hwnd: HWND, x: i32, y: i32) -> Option<usize> {
+        if self.quick_open {
+            return None;
+        }
+        (0..if self.split_visible { 2 } else { 1 }).find(|&pane| {
+            self.scrollbar(hwnd, pane).is_some_and(|(track, _)| {
+                x >= track.left && x < track.right && y >= track.top && y < track.bottom
+            })
+        })
+    }
+
+    pub(super) fn invalidate_scrollbar(&self, hwnd: HWND, pane: usize) {
+        if let Some((track, _)) = self.scrollbar(hwnd, pane) {
+            unsafe { InvalidateRect(hwnd, &track, 0) };
+        }
+    }
+
+    /// Lights up the scrollbar of the pane under the mouse, if any, and asks
+    /// to hear when the mouse leaves the window, which would leave it lit.
+    pub(super) fn set_scrollbar_hover(&mut self, hwnd: HWND, pane: Option<usize>) {
+        if pane == self.scrollbar_hover {
             return;
         }
-        let visible = self.visible_lines(hwnd);
-        // The scrollbar counts screen rows, so folded lines don't inflate
-        // the range or push the thumb down.
-        let doc = self.doc();
-        let info = SCROLLINFO {
-            cbSize: size_of::<SCROLLINFO>() as u32,
-            fMask: SIF_RANGE | SIF_PAGE | SIF_POS,
-            nMin: 0,
-            nMax: doc
-                .visible_line_count()
-                .saturating_sub(1)
-                .min(i32::MAX as usize) as i32,
-            nPage: visible as u32,
-            nPos: doc
-                .visual_index(self.view().first_line)
-                .min(i32::MAX as usize) as i32,
-            nTrackPos: 0,
-        };
-        unsafe {
-            SetScrollInfo(hwnd, SB_VERT, &info, 1);
+        for pane in [self.scrollbar_hover, pane].into_iter().flatten() {
+            self.invalidate_scrollbar(hwnd, pane);
         }
+        self.scrollbar_hover = pane;
+        if pane.is_some() {
+            let mut leave = TRACKMOUSEEVENT {
+                cbSize: size_of::<TRACKMOUSEEVENT>() as u32,
+                dwFlags: TME_LEAVE,
+                hwndTrack: hwnd,
+                dwHoverTime: 0,
+            };
+            unsafe { TrackMouseEvent(&mut leave) };
+        }
+    }
+
+    /// A press at `y` on the focused pane's scrollbar. On the slider it
+    /// starts a drag; on the track it first jumps there, the slider centered
+    /// under the mouse, as in VS Code, then follows the mouse the same way.
+    pub(super) fn scrollbar_press(&mut self, hwnd: HWND, y: i32) {
+        let pane = self.focused_pane;
+        let Some((track, slider)) = self.scrollbar(hwnd, pane) else {
+            return;
+        };
+        let mut index = self.doc().visual_index(self.view_top(hwnd, pane).0);
+        if y < slider.top || y >= slider.bottom {
+            let length = slider.bottom - slider.top;
+            let room = (track.bottom - track.top - length).max(1);
+            let offset = (y - length / 2 - track.top).clamp(0, room) as usize;
+            let last = self.doc().visible_line_count().saturating_sub(1);
+            index = (offset * last + room as usize / 2) / room as usize;
+            self.scroll_to_index(hwnd, index);
+        }
+        self.scrollbar_grab = Some((y, index));
+        unsafe { SetCapture(hwnd) };
+        self.invalidate_scrollbar(hwnd, pane);
+    }
+
+    /// While the slider is held: scrolls by as many lines as the mouse has
+    /// moved it since the press, so grabbing it never moves the view.
+    pub(super) fn scrollbar_drag(&mut self, hwnd: HWND, y: i32) {
+        let Some((from_y, from_index)) = self.scrollbar_grab else {
+            return;
+        };
+        let Some((track, slider)) = self.scrollbar(hwnd, self.focused_pane) else {
+            return;
+        };
+        let room = (track.bottom - track.top - (slider.bottom - slider.top)).max(1) as i64;
+        let last = self.doc().visible_line_count().saturating_sub(1) as i64;
+        let moved = (y - from_y) as i64 * last / room;
+        self.scroll_to_index(hwnd, (from_index as i64 + moved).clamp(0, last) as usize);
+    }
+
+    /// Scrolls the focused pane so the `index`th visible line is at the top,
+    /// redrawing only that pane: the caret, and so the status bar, stay put.
+    fn scroll_to_index(&mut self, hwnd: HWND, index: usize) {
+        let pane = self.focused_pane;
+        let top = (self.doc().line_at_visual_index(index), 0);
+        if top == self.view_top(hwnd, pane) {
+            return;
+        }
+        self.set_view_top(top);
+        let area = RECT {
+            left: self.pane_left(hwnd, pane),
+            right: self.pane_right(hwnd, pane),
+            ..self.editor_area(hwnd, false)
+        };
+        unsafe { InvalidateRect(hwnd, &area, 0) };
     }
 
     pub(super) fn keep_cursor_visible(&mut self, hwnd: HWND) {
@@ -2207,7 +2307,6 @@ impl App {
         } else {
             self.set_view_top(top);
         }
-        self.update_scrollbar(hwnd);
         self.caret_on = true;
         unsafe {
             InvalidateRect(hwnd, null(), 0);

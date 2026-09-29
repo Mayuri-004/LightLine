@@ -142,7 +142,8 @@ impl App {
             return None;
         }
         let text_left = self.pane_left(hwnd, pane) + self.scale(GUTTER + PAD);
-        let width = self.pane_right(hwnd, pane) - text_left - self.scale(PAD);
+        // Wrapped text stops short of the scrollbar.
+        let width = self.pane_right(hwnd, pane) - text_left - self.scale(PAD + SCROLLBAR);
         Some((width / self.char_width.max(1)).max(8) as usize)
     }
 

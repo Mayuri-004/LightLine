@@ -282,7 +282,6 @@ impl App {
                 }
                 self.settings.font_size = size;
                 self.set_metrics(self.dpi, self.zoom);
-                self.update_scrollbar(hwnd);
                 self.keep_cursor_visible(hwnd);
             }
             Setting::TabSize => {

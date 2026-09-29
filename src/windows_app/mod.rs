@@ -83,7 +83,7 @@ use windows_sys::Win32::System::Console::{
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::Controls::Dialogs::*;
-use windows_sys::Win32::UI::Controls::{SetScrollInfo, ShowScrollBar};
+use windows_sys::Win32::UI::Controls::WM_MOUSELEAVE;
 use windows_sys::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForWindow, SetProcessDpiAwarenessContext,
 };
@@ -107,6 +107,8 @@ const GUTTER_NUMBER_RIGHT_INSET: i32 = 6;
 const TOP: i32 = 5;
 const STATUS: i32 = 29;
 const PAD: i32 = 10;
+// The editor's vertical scrollbar, down the right edge of each code pane.
+const SCROLLBAR: i32 = 14;
 const TAB_HEIGHT: i32 = 42;
 const BREADCRUMB_HEIGHT: i32 = 30;
 const TAB_WIDTH: i32 = 180;

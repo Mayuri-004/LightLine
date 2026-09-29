@@ -641,6 +641,35 @@ impl App {
                     DeleteObject(caret);
                 }
             }
+            // The scrollbar goes over the text: a track with a thin edge, and
+            // the slider, lighter under the mouse and lighter still held.
+            if let Some((track, slider)) = self.scrollbar(hwnd, pane) {
+                let edge = self.scale(1).max(1);
+                Self::fill(hdc, track, self.theme.editor_bg);
+                Self::fill(
+                    hdc,
+                    RECT {
+                        right: track.left + edge,
+                        ..track
+                    },
+                    self.theme.edge,
+                );
+                let strength = if self.scrollbar_grab.is_some() && pane == self.focused_pane {
+                    0.45
+                } else if self.scrollbar_hover == Some(pane) {
+                    0.3
+                } else {
+                    0.2
+                };
+                Self::fill(
+                    hdc,
+                    RECT {
+                        left: track.left + edge,
+                        ..slider
+                    },
+                    blend(self.theme.editor_bg, self.theme.text, strength),
+                );
+            }
             RestoreDC(hdc, saved);
         }
     }

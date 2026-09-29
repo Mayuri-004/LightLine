@@ -1889,6 +1889,10 @@ impl App {
         if self.tabs[self.tab_for_pane(pane)].is_placeholder() {
             return;
         }
+        if self.scrollbar_at(hwnd, x, y) == Some(pane) {
+            self.scrollbar_press(hwnd, y);
+            return;
+        }
         let pane_left = self.pane_left(hwnd, pane);
         if x < pane_left + self.scale(GUTTER) {
             // Match the visual order: folding is the narrow first lane;
@@ -1927,6 +1931,10 @@ impl App {
     }
 
     pub(super) fn mouse_drag(&mut self, hwnd: HWND, x: i32, y: i32) {
+        if self.scrollbar_grab.is_some() {
+            self.scrollbar_drag(hwnd, y);
+            return;
+        }
         if self.divider_dragging {
             self.resize_split(hwnd, x);
             return;

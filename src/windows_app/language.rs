@@ -612,6 +612,16 @@ impl App {
         if self.editor_context_hover(hwnd, x, y) || self.more_menu_hover(hwnd, x, y) {
             return;
         }
+        let over_scrollbar = self.scrollbar_at(hwnd, x, y);
+        self.set_scrollbar_hover(hwnd, over_scrollbar);
+        if over_scrollbar.is_some() {
+            // No hover card for the code under the scrollbar.
+            if self.hover_mouse.is_some() || self.hover_card.is_some() {
+                self.clear_hover(hwnd);
+                unsafe { InvalidateRect(hwnd, null(), 0) };
+            }
+            return;
+        }
         let mut rect = RECT::default();
         unsafe { GetClientRect(hwnd, &mut rect) };
         let bottom = rect.bottom

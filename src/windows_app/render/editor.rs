@@ -154,10 +154,12 @@ impl App {
             right: self.pane_right(hwnd, pane),
             bottom: code_bottom,
         };
+        // The scrollbar is left out: the card's border, drawn only in the
+        // full frame, runs down its right edge.
         let inside = dirty.right > dirty.left
             && dirty.left >= self.code_left(hwnd)
             && dirty.top >= bounds.top
-            && dirty.right <= bounds.right
+            && dirty.right <= bounds.right - self.scale(SCROLLBAR)
             && dirty.bottom <= bounds.bottom;
         // A crossfade or a diff view draws over this area differently.
         if !inside

@@ -615,7 +615,6 @@ impl App {
         if !self.ai_assistant_visible {
             self.ai_assistant_visible = true;
             self.keep_active_tab_visible(hwnd);
-            self.update_scrollbar(hwnd);
         }
         unsafe { InvalidateRect(hwnd, null(), 0) };
         if !self.ai_ready() {

@@ -36,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Right-clicking in the editor opens a menu (it did nothing before): **AI: Explain / Fix / Write Tests for / Add Comments to Selection**, **AI: Explain / Fix This Error** on an underlined problem, then Cut, Copy, Paste and Select All. The same AI actions are in the command palette as `AI: ...`, plus **AI: New Chat**.
   - **Fix This Error** sends the lines around the error as context and selects just the error's block for the answer to replace.
 - **Colored Code Blocks**: Rust and Python code blocks in AI answers and in the Markdown preview use the editor's syntax colors.
+- **Editor Scrollbar**: The editor had no visible scrollbar. The window's own scrollbar was hidden by LightLine's custom title bar, yet it was still updated on every scroll. Each code pane now has a scrollbar down its right edge, as in VS Code. The slider shows how much of the file is on screen and where. Drag it to scroll, or click the track to jump there and keep dragging. It lights up under the mouse and while held, clicking it never moves the caret, and wrapped lines stop short of it. Its colors come from the theme.
 
 #### Changed
 - **Idle Terminals Use No CPU**: An open terminal woke its background threads about 100 times a second to check for work, even with nothing happening. They now sleep until there is output, input, a resize or a stop. An idle shell went from about 100 wakeups and 47 ms of CPU every 10 seconds to none.
