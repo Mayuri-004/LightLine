@@ -8,9 +8,53 @@ on:
 
 jobs:
   build-and-test:
-    runs-on: windows-latest
+    # x86_64 and ARM64, each on its own hardware, so an ARM64 problem shows
+    # up here rather than in the middle of a release.
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+
+      # The ARM image may come without rustup or a toolchain; the x86_64 one
+      # has both preinstalled.
+      - name: Install rustup (ARM64)
+        if: runner.arch == 'ARM64'
+        shell: pwsh
+        run: |
+          if (Get-Command rustup -ErrorAction SilentlyContinue) {
+            rustup --version
+            return
+          }
+          $init = Join-Path $env:RUNNER_TEMP "rustup-init.exe"
+          Invoke-WebRequest "https://static.rust-lang.org/rustup/dist/aarch64-pc-windows-msvc/rustup-init.exe" -OutFile $init
+          & $init -y --default-toolchain none --profile minimal --no-modify-path
+          $cargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { Join-Path $env:USERPROFILE ".cargo" }
+          Join-Path $cargoHome "bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+
+      - name: Install Rust toolchain (ARM64)
+        if: runner.arch == 'ARM64'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      # ureq's TLS uses ring, which needs clang to build for Windows ARM64.
+      - name: Install clang (ARM64)
+        if: runner.arch == 'ARM64'
+        shell: pwsh
+        run: |
+          $llvm = "C:\Program Files\LLVM\bin"
+          if (-not (Get-Command clang -ErrorAction SilentlyContinue) -and -not (Test-Path "$llvm\clang.exe")) {
+            $installer = Join-Path $env:RUNNER_TEMP "llvm.exe"
+            Invoke-WebRequest "https://github.com/llvm/llvm-project/releases/download/llvmorg-20.1.8/LLVM-20.1.8-woa64.exe" -OutFile $installer
+            Start-Process $installer -ArgumentList "/S" -Wait
+          }
+          if (Test-Path "$llvm\clang.exe") {
+            $llvm | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          }
+
       - name: Build
         run: cargo build --locked
       - name: Test

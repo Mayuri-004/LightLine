@@ -43,14 +43,59 @@ jobs:
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-  release:
+  # Built once per architecture, each on its own hardware so the tests run
+  # natively: x86_64 on the usual runner, ARM64 on GitHub's Windows 11 ARM one.
+  build:
     needs: release-request
-    runs-on: windows-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: x86_64
+            runner: windows-latest
+            # Kept as plain lightline.exe, the name earlier releases and the
+            # README's download link use.
+            exe: lightline.exe
+          - arch: arm64
+            runner: windows-11-arm
+            exe: lightline-arm64.exe
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Check out source
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      # The ARM image may come without rustup, which dtolnay/rust-toolchain
+      # below needs to install the pinned toolchain.
+      - name: Install rustup (ARM64)
+        if: matrix.arch == 'arm64'
+        shell: pwsh
+        run: |
+          if (Get-Command rustup -ErrorAction SilentlyContinue) {
+            rustup --version
+            return
+          }
+          $init = Join-Path $env:RUNNER_TEMP "rustup-init.exe"
+          Invoke-WebRequest "https://static.rust-lang.org/rustup/dist/aarch64-pc-windows-msvc/rustup-init.exe" -OutFile $init
+          & $init -y --default-toolchain none --profile minimal --no-modify-path
+          $cargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { Join-Path $env:USERPROFILE ".cargo" }
+          Join-Path $cargoHome "bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+
+      # ureq's TLS uses ring, which needs clang to build for Windows ARM64.
+      - name: Install clang (ARM64)
+        if: matrix.arch == 'arm64'
+        shell: pwsh
+        run: |
+          $llvm = "C:\Program Files\LLVM\bin"
+          if (-not (Get-Command clang -ErrorAction SilentlyContinue) -and -not (Test-Path "$llvm\clang.exe")) {
+            $installer = Join-Path $env:RUNNER_TEMP "llvm.exe"
+            Invoke-WebRequest "https://github.com/llvm/llvm-project/releases/download/llvmorg-20.1.8/LLVM-20.1.8-woa64.exe" -OutFile $installer
+            Start-Process $installer -ArgumentList "/S" -Wait
+          }
+          if (Test-Path "$llvm\clang.exe") {
+            $llvm | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          }
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -84,7 +129,9 @@ jobs:
             throw "Release tag $tag already exists."
           }
 
+      # Formatting is the same on every architecture, so it's checked once.
       - name: Check formatting
+        if: matrix.arch == 'x86_64'
         run: cargo fmt --all -- --check
 
       - name: Run tests
@@ -106,7 +153,7 @@ jobs:
         id: upload-unsigned
         uses: actions/upload-artifact@v7
         with:
-          name: lightline-unsigned
+          name: lightline-unsigned-${{ matrix.arch }}
           path: target/release/lightline.exe
 
       - name: Sign executable with SignPath
@@ -138,38 +185,96 @@ jobs:
         shell: pwsh
         env:
           VERSION: ${{ needs.release-request.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+          EXE: ${{ matrix.exe }}
         run: |
-          $releaseDirectory = "release"
-          $zipPath = "lightline-v$env:VERSION-windows-x86_64.zip"
+          # Inside the zip the program is always lightline.exe.
+          New-Item -ItemType Directory -Force -Path "package", "dist" | Out-Null
+          Copy-Item "target/release/lightline.exe" "package/lightline.exe"
+          Copy-Item "README.md" "package/README.md"
+          Copy-Item "CHANGELOG.md" "package/CHANGELOG.md"
+          Compress-Archive -Path "package/*" -DestinationPath "dist/lightline-v$env:VERSION-windows-$env:ARCH.zip" -Force
+          Copy-Item "target/release/lightline.exe" "dist/$env:EXE"
+          Get-ChildItem dist
 
-          New-Item -ItemType Directory -Force -Path $releaseDirectory | Out-Null
-          Copy-Item "target/release/lightline.exe" "$releaseDirectory/lightline.exe"
-          Copy-Item "README.md" "$releaseDirectory/README.md"
-          Copy-Item "CHANGELOG.md" "$releaseDirectory/CHANGELOG.md"
-          Compress-Archive -Path "$releaseDirectory/*" -DestinationPath $zipPath -Force
+      - name: Upload release assets
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
 
-          $assets = @("target/release/lightline.exe", $zipPath)
-          $checksums = foreach ($asset in $assets) {
-            $hash = (Get-FileHash -LiteralPath $asset -Algorithm SHA256).Hash.ToLowerInvariant()
-            "$hash  $([System.IO.Path]::GetFileName($asset))"
-          }
-          [System.IO.File]::WriteAllLines(
-            (Join-Path (Get-Location) "SHA256SUMS.txt"),
-            $checksums,
-            [System.Text.UTF8Encoding]::new($false)
-          )
+  # Publishes once both architectures have built and passed their tests.
+  publish:
+    needs: [release-request, build]
+    runs-on: ubuntu-latest
+    steps:
+      # For the Scoop manifest update at the end.
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Download release assets
+        uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+
+      - name: Write checksums
+        working-directory: dist
+        run: |
+          # Written outside dist first, so it never lists itself.
+          sha256sum -- * > ../SHA256SUMS.txt
+          mv ../SHA256SUMS.txt SHA256SUMS.txt
+          cat SHA256SUMS.txt
 
       - name: Create GitHub release
-        shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.release-request.outputs.version }}
         run: |
-          $tag = "v$env:VERSION"
-          $zipPath = "lightline-v$env:VERSION-windows-x86_64.zip"
-          gh release create $tag `
-            "target/release/lightline.exe" `
-            $zipPath `
-            "SHA256SUMS.txt" `
-            --title "LightLine v$env:VERSION" `
+          # --target: the tag goes on the commit that was built and tested,
+          # even if main has moved on since.
+          gh release create "v$VERSION" dist/* \
+            --repo "${{ github.repository }}" \
+            --target "${{ github.sha }}" \
+            --title "LightLine v$VERSION" \
             --generate-notes
+
+      # This repository is also a Scoop bucket (bucket/lightline.json), so
+      # `scoop install lightline` gets the new version. Pre-releases such as
+      # 0.4.0-beta.1 are left out. Pushes made with GITHUB_TOKEN don't start
+      # other workflows, so this commit doesn't trigger the Rust check.
+      - name: Update the Scoop manifest
+        if: ${{ !contains(needs.release-request.outputs.version, '-') }}
+        env:
+          VERSION: ${{ needs.release-request.outputs.version }}
+        run: |
+          base="https://github.com/${{ github.repository }}/releases/download/v$VERSION"
+          x64_hash=$(awk '$2 ~ /-windows-x86_64\.zip$/ { print $1 }' dist/SHA256SUMS.txt)
+          arm64_hash=$(awk '$2 ~ /-windows-arm64\.zip$/ { print $1 }' dist/SHA256SUMS.txt)
+          if [ -z "$x64_hash" ] || [ -z "$arm64_hash" ]; then
+            echo "Missing a zip hash in SHA256SUMS.txt"
+            exit 1
+          fi
+          jq --indent 4 \
+            --arg version "$VERSION" \
+            --arg x64_url "$base/lightline-v$VERSION-windows-x86_64.zip" \
+            --arg x64_hash "$x64_hash" \
+            --arg arm64_url "$base/lightline-v$VERSION-windows-arm64.zip" \
+            --arg arm64_hash "$arm64_hash" \
+            '.version = $version
+             | .architecture = {
+                 "64bit": { url: $x64_url, hash: $x64_hash },
+                 "arm64": { url: $arm64_url, hash: $arm64_hash }
+               }' \
+            bucket/lightline.json > lightline.json.new
+          mv lightline.json.new bucket/lightline.json
+          git diff --stat
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add bucket/lightline.json
+          git commit -m "chore(scoop): update LightLine to $VERSION"
+          git push origin HEAD:main

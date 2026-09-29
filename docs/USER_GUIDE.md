@@ -175,6 +175,6 @@ Each release includes `SHA256SUMS.txt`. In PowerShell, in the folder you downloa
 Get-FileHash .\lightline.exe -Algorithm SHA256
 ```
 
-The result must match the `lightline.exe` line in `SHA256SUMS.txt` exactly. For the ZIP, run it with the ZIP's name instead. If they differ, delete the download.
+The result must match the `lightline.exe` line in `SHA256SUMS.txt` exactly. For the ARM64 build or a ZIP, run it with that file's name instead. If they differ, delete the download.
 
 LightLine isn't code-signed yet, so the first time you run it, Windows SmartScreen may say **"Windows protected your PC"**. If the checksum matches, click **More info**, check that the app is `lightline.exe`, and click **Run anyway**. Don't turn SmartScreen off, and don't continue if Windows reports malware rather than an unrecognized app.

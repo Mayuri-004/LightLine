@@ -36,8 +36,17 @@ LightLine is a code editor that feels like VS Code but starts fast and stays lig
 
 ## Get started
 
-1. Download **`lightline.exe`** from the [latest release](https://github.com/mehmoodulhaq570/LightLine/releases/latest). It needs Windows 10 or 11.
+1. Download **`lightline.exe`** from the [latest release](https://github.com/mehmoodulhaq570/LightLine/releases/latest). It needs Windows 10 or 11. On a Windows on ARM PC, such as a Snapdragon laptop, download **`lightline-arm64.exe`** instead.
 2. Double-click it. That's it; there's nothing to install.
+
+**Or install it with [Scoop](https://scoop.sh)**, which also keeps it up to date:
+
+```powershell
+scoop bucket add lightline https://github.com/mehmoodulhaq570/LightLine
+scoop install lightline
+```
+
+Update with `scoop update lightline`. Scoop adds LightLine to the Start menu and lets you run `lightline` from any terminal.
 
 LightLine isn't code-signed yet, so Windows may show **"Windows protected your PC"** the first time. Click **More info**, then **Run anyway**. To check your download is genuine first, compare it with the release's `SHA256SUMS.txt` ([how to](docs/USER_GUIDE.md#verifying-a-download)).
 
