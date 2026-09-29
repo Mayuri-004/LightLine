@@ -1060,13 +1060,19 @@ impl App {
     /// Opens the rendered preview of the active Markdown file: as its own
     /// tab, or `beside` the source in a split so edits show up as you type.
     /// The tab index of the active Markdown file's preview when it is shown
-    /// in the other pane, beside the file.
+    /// in the other pane, beside the file; or of the active tab when it is
+    /// that preview, so the file's preview button stays while it has focus.
     pub(super) fn preview_beside(&self) -> Option<usize> {
-        let source = self.doc().path.as_ref()?;
         if !self.split_visible {
             return None;
         }
         let other = self.pane_tabs[1 - self.focused_pane];
+        // The preview itself has the focus, with its file in the other pane.
+        if let Some(preview) = &self.tab().markdown {
+            let beside = self.tabs.get(other)?.document.path.as_ref() == Some(&preview.source);
+            return beside.then_some(self.active);
+        }
+        let source = self.doc().path.as_ref()?;
         self.tabs
             .get(other)?
             .markdown
@@ -1088,8 +1094,10 @@ impl App {
     // showing the file, where it was scrolled to. A preview is never
     // edited, so there is nothing to ask about saving.
     fn close_markdown_preview(&mut self, hwnd: HWND, index: usize) {
-        let mut source = self.active;
-        if self.focused_pane == 1 {
+        // The file is in the pane the preview isn't, focused or not.
+        let source_pane = usize::from(self.pane_tabs[0] == index);
+        let mut source = self.pane_tabs[source_pane];
+        if source_pane == 1 {
             self.tabs[source].views[0] = self.tabs[source].views[1].clone();
         }
         self.tabs.remove(index);
@@ -1573,8 +1581,8 @@ impl App {
 
     /// Scrolls the active preview by `pixels` (positive is down). Painting
     /// clamps it to the document.
-    pub(super) fn scroll_markdown(&mut self, hwnd: HWND, pixels: i32) {
-        if let Some(preview) = &self.tab().markdown {
+    pub(super) fn scroll_markdown(&mut self, hwnd: HWND, pane: usize, pixels: i32) {
+        if let Some(preview) = &self.tabs[self.tab_for_pane(pane)].markdown {
             let scroll = preview.scroll.get().saturating_add(pixels).max(0);
             preview.scroll.set(scroll);
             unsafe { InvalidateRect(hwnd, null(), 0) };
@@ -1594,7 +1602,7 @@ impl App {
             k if k == VK_END as u32 => i32::MAX / 2,
             _ => return false,
         };
-        self.scroll_markdown(hwnd, pixels);
+        self.scroll_markdown(hwnd, self.focused_pane, pixels);
         true
     }
 

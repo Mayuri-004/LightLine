@@ -1657,7 +1657,14 @@ impl App {
     // What the button at the right end of the tab strip does for the active
     // file: run it (Python, C/C++) or preview it beside itself (Markdown).
     pub(super) fn file_action(&self) -> Option<FileAction> {
-        if self.welcome || self.tab().read_only() {
+        if self.welcome {
+            return None;
+        }
+        // A preview beside its file keeps the file's button, which closes it.
+        if self.tab().markdown.is_some() {
+            return self.preview_beside().map(|_| FileAction::PreviewMarkdown);
+        }
+        if self.tab().read_only() {
             return None;
         }
         let doc = self.doc();

@@ -544,21 +544,28 @@ unsafe extern "system" fn wnd_proc(
                 unsafe { InvalidateRect(hwnd, null(), 0) };
                 return 0;
             }
-            if app.split_visible && point.x >= app.editor_left() && point.y >= app.editor_top() {
-                let pane = usize::from(point.x >= app.pane_divider(hwnd));
-                app.focus_pane(hwnd, pane);
-            }
+            // The wheel scrolls the pane under the mouse, as in VS Code, and
+            // leaves the focus where it is. Focusing that pane switched the
+            // active tab: scrolling a preview beside its file hid the file's
+            // preview button, and closed the find box.
+            let pane =
+                if app.split_visible && point.x >= app.editor_left() && point.y >= app.editor_top()
+                {
+                    usize::from(point.x >= app.pane_divider(hwnd))
+                } else {
+                    app.focused_pane
+                };
             // A Markdown preview scrolls by pixels, not document lines.
-            if app.tab().markdown.is_some() {
+            if app.tabs[app.tab_for_pane(pane)].markdown.is_some() {
                 let pixels = -(delta as i32) * app.scale(48) / 120;
-                app.scroll_markdown(hwnd, pixels);
+                app.scroll_markdown(hwnd, pane, pixels);
                 return 0;
             }
             // Scroll by screen rows: a wrapped line has several, a folded
             // block one.
             if delta != 0 {
                 let rows = if delta > 0 { -3 } else { 3 };
-                app.scroll_rows(hwnd, rows);
+                app.scroll_pane_rows(hwnd, pane, rows);
             }
             unsafe {
                 InvalidateRect(hwnd, null(), 0);
