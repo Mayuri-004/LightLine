@@ -5,11 +5,11 @@ const PAGE_GUTTER: i32 = 20;
 const PAGE_TOP: i32 = 12;
 const WELCOME_RAIL_FIRST_ROW: i32 = 18;
 const WELCOME_RAIL_ROW: i32 = 52;
-const WELCOME_CARD_GAP: i32 = 14;
-const PANEL_HEADER_H: i32 = 52;
-const RECENT_ROW_H: i32 = 54;
-const QUICK_ROW_H: i32 = 36;
-const COMMUNITY_H: i32 = 64;
+const WELCOME_CARD_GAP: i32 = 10;
+const PANEL_HEADER_H: i32 = 45;
+const RECENT_ROW_H: i32 = 50;
+const QUICK_ROW_H: i32 = 33;
+const COMMUNITY_H: i32 = 53;
 
 const CARD_BG: u32 = rgb(16, 27, 45);
 // Distinct from (and one shade lighter than) the theme's general
@@ -110,7 +110,7 @@ impl App {
         let page_left = rail_right + gutter;
         let page_right = rect.right - gutter;
         let page_top = content_top + s(PAGE_TOP);
-        let page_bottom = status_top - s(14);
+        let page_bottom = status_top - s(8);
         let gap = s(WELCOME_CARD_GAP);
         let community = RECT {
             left: page_left,
@@ -119,13 +119,16 @@ impl App {
             bottom: page_bottom,
         };
         let row_bottom = community.top - gap;
-        let row_space = (row_bottom - page_top - gap).max(s(420));
-        let hero_height = row_space * 55 / 100;
+        let row_space = (row_bottom - page_top - gap).max(0);
+        let mut hero_height = row_space * 55 / 100;
+        if row_space >= s(270) {
+            hero_height = hero_height.max(s(180)).min(row_space - s(90));
+        }
         let lower_top = page_top + hero_height + gap;
         let page_width = page_right - page_left;
         let show_aside = page_width >= s(1040);
         let aside_width = if show_aside {
-            (page_width - gap) * 31 / 100
+            (page_width - gap) * 312 / 1000
         } else {
             0
         };
@@ -161,31 +164,43 @@ impl App {
             ));
         }
 
-        let button_top = hero_panel.bottom - s(78);
+        let compact_hero = hero_panel.bottom - hero_panel.top < s(270);
+        let button_height = if compact_hero { s(46) } else { s(50) };
+        let button_bottom_gap = if compact_hero { s(14) } else { s(35) };
+        let button_top = hero_panel.bottom - button_bottom_gap - button_height;
         let open_folder = RECT {
-            left: hero_panel.left + s(34),
+            left: hero_panel.left + s(21),
             top: button_top,
-            right: hero_panel.left + s(226),
-            bottom: button_top + s(50),
+            right: hero_panel.left + s(207),
+            bottom: button_top + button_height,
         };
         let new_file = RECT {
             left: open_folder.right + s(14),
             top: button_top,
-            right: open_folder.right + s(162),
-            bottom: button_top + s(50),
+            right: open_folder.right + s(169),
+            bottom: button_top + button_height,
         };
         targets.push((open_folder, WelcomeAction::OpenFolder));
         targets.push((new_file, WelcomeAction::NewFile));
 
-        let lower_height = (row_bottom - lower_top).max(s(140));
+        let lower_height = (row_bottom - lower_top).max(0);
         let body = (lower_height - s(PANEL_HEADER_H)).max(0);
         let recent_rows = self
             .recent
             .len()
             .min(4)
             .min((body / s(RECENT_ROW_H)).max(0) as usize);
-        let quick_rows = QUICK.len().min((body / s(QUICK_ROW_H)).max(0) as usize);
-        let recent_width = (page_width - gap) * 60 / 100;
+        let show_quick = page_width >= s(560);
+        let quick_rows = if show_quick {
+            QUICK.len().min((body / s(QUICK_ROW_H)).max(0) as usize)
+        } else {
+            0
+        };
+        let recent_width = if show_quick {
+            (page_width - gap) * 595 / 1000
+        } else {
+            page_width
+        };
         let recent_panel = RECT {
             left: page_left,
             top: lower_top,
@@ -193,7 +208,11 @@ impl App {
             bottom: row_bottom,
         };
         let quick_panel = RECT {
-            left: recent_panel.right + gap,
+            left: if show_quick {
+                recent_panel.right + gap
+            } else {
+                page_right
+            },
             top: lower_top,
             right: page_right,
             bottom: row_bottom,
@@ -475,6 +494,9 @@ impl App {
     fn paint_welcome_hero(&self, hdc: HDC, layout: &WelcomeLayout) {
         let s = |value: i32| self.scale(value);
         let panel = layout.hero_panel;
+        let panel_width = panel.right - panel.left;
+        let panel_height = panel.bottom - panel.top;
+        let compact = panel_height < s(270);
         self.gradient_card(
             hdc,
             panel,
@@ -484,7 +506,7 @@ impl App {
         );
         self.card_outline(hdc, panel, s(12), themed(WELCOME_CARD_EDGE));
 
-        let left = panel.left + s(28);
+        let left = panel.left + s(21);
         let clip = RECT {
             left,
             top: panel.top + s(10),
@@ -499,33 +521,34 @@ impl App {
             hdc,
             "WELCOME TO",
             left,
-            panel.top + s(20),
+            panel.top + s(if compact { 12 } else { 17 }),
             self.theme.violet,
             clip,
         );
         unsafe { SetTextCharacterExtra(hdc, 0) };
 
-        let logo_top = panel.top + s(48);
+        let logo_top = panel.top + s(if compact { 30 } else { 44 });
+        let logo_size = s(if compact { 50 } else { 58 });
         unsafe {
             DrawIconEx(
                 hdc,
                 left,
                 logo_top,
                 self.hero_icon,
-                s(58),
-                s(58),
+                logo_size,
+                logo_size,
                 0,
                 null_mut(),
                 DI_NORMAL,
             );
             SelectObject(hdc, self.hero_font);
         }
-        let word_left = left + s(72);
+        let word_left = left + logo_size + s(14);
         self.label_mid(
             hdc,
             "LightLine",
             word_left,
-            logo_top + s(29),
+            logo_top + logo_size / 2,
             self.theme.text,
             clip,
         );
@@ -534,9 +557,9 @@ impl App {
             hdc,
             RECT {
                 left: badge_left,
-                top: logo_top + s(10),
-                right: badge_left + s(56),
-                bottom: logo_top + s(46),
+                top: logo_top + s(if compact { 8 } else { 10 }),
+                right: badge_left + s(60),
+                bottom: logo_top + s(if compact { 42 } else { 46 }),
             },
             s(7),
             ui(78, 56, 176),
@@ -546,53 +569,58 @@ impl App {
             hdc,
             "IDE",
             badge_left + s(12),
-            logo_top + s(28),
+            logo_top + logo_size / 2,
             self.theme.text,
             clip,
         );
         unsafe { SelectObject(hdc, self.title_font) };
-        Self::label(
-            hdc,
-            "Build Faster. Think Smarter.",
-            left,
-            logo_top + s(78),
-            self.theme.text,
-            clip,
-        );
+        let slogan_top = logo_top + s(if compact { 50 } else { 70 });
+        if !compact || layout.open_folder.top - slogan_top >= s(24) {
+            Self::label(
+                hdc,
+                "Build Faster. Think Smarter.",
+                left,
+                slogan_top,
+                self.theme.text,
+                clip,
+            );
+        }
         unsafe { SelectObject(hdc, self.ui_font) };
-        Self::label(
-            hdc,
-            "A modern, AI-powered IDE for developers.",
-            left,
-            logo_top + s(122),
-            self.theme.muted,
-            clip,
-        );
-        Self::label(
-            hdc,
-            "Fast to start, focused to work in.",
-            left,
-            logo_top + s(145),
-            self.theme.muted,
-            clip,
-        );
+        if panel_height >= s(250) {
+            unsafe { SetTextCharacterExtra(hdc, s(1)) };
+            Self::label(
+                hdc,
+                "A modern, AI-powered IDE for developers.",
+                left,
+                logo_top + s(if compact { 99 } else { 115 }),
+                self.theme.muted,
+                clip,
+            );
+            Self::label(
+                hdc,
+                "Fast to start, focused to work in.",
+                left,
+                logo_top + s(if compact { 117 } else { 138 }),
+                self.theme.muted,
+                clip,
+            );
+            unsafe { SetTextCharacterExtra(hdc, 0) };
+        }
 
         let primary = layout.open_folder;
         Self::rounded_fill(hdc, primary, s(7), ui(112, 52, 238));
-        if !self.icons.draw_generic(
+        self.welcome_folder_outline(
             hdc,
-            GenericIcon::FolderOpen,
-            primary.left + s(18),
-            primary.top + s(14),
-            s(20),
-        ) {
-            self.draw_vector_folder(hdc, primary.left + s(18), primary.top + s(14), s(20), true);
-        }
+            primary.left + s(29),
+            primary.top + (primary.bottom - primary.top - s(22)) / 2,
+            s(22),
+            self.theme.text,
+        );
         unsafe { SelectObject(hdc, self.brand_font) };
         self.label_mid(
             hdc,
             "Open Folder",
-            primary.left + s(52),
+            primary.left + s(67),
             (primary.top + primary.bottom) / 2,
             self.theme.text,
             primary,
@@ -609,22 +637,22 @@ impl App {
         if !self.icons.draw_generic(
             hdc,
             GenericIcon::File,
-            secondary.left + s(18),
-            secondary.top + s(14),
+            secondary.left + s(26),
+            secondary.top + (secondary.bottom - secondary.top - s(20)) / 2,
             s(20),
         ) {
             self.draw_vector_file(
                 hdc,
                 std::path::Path::new("untitled"),
-                secondary.left + s(18),
-                secondary.top + s(14),
+                secondary.left + s(26),
+                secondary.top + (secondary.bottom - secondary.top - s(20)) / 2,
                 s(20),
             );
         }
         self.label_mid(
             hdc,
             "New File",
-            secondary.left + s(52),
+            secondary.left + s(60),
             (secondary.top + secondary.bottom) / 2,
             self.theme.text,
             secondary,
@@ -632,60 +660,58 @@ impl App {
 
         // The right side is deliberately drawn as vectors so it remains sharp
         // at every DPI and follows the selected theme.
-        let art_left = panel.left + (panel.right - panel.left) * 52 / 100;
-        let art_top = panel.top + s(54);
-        let art_right = panel.right - s(92);
-        let art_bottom = panel.bottom - s(46);
-        self.stroke(hdc, ui(18, 139, 224), |dc| unsafe {
-            Arc(
-                dc,
-                art_left - s(52),
-                art_top - s(22),
-                panel.right - s(22),
-                art_bottom + s(28),
-                art_left,
-                art_bottom,
-                panel.right - s(28),
-                art_top,
-            );
-        });
-        self.stroke(hdc, ui(112, 52, 238), |dc| unsafe {
-            Arc(
-                dc,
-                art_left - s(28),
-                art_top - s(34),
-                panel.right - s(46),
-                art_bottom + s(18),
-                panel.right - s(56),
-                art_top,
-                art_left,
-                art_bottom,
-            );
-        });
+        if panel_width < s(760) || panel_height < s(180) {
+            return;
+        }
+        let art_left = panel.left + panel_width * 55 / 100;
+        let art_top = panel.top + panel_height * 23 / 100;
+        let art_width = (panel_width * 32 / 100).min(s(274));
+        let art_height = (panel_height * 54 / 100).min(s(168));
+        let art_right = art_left + art_width;
+        let art_bottom = art_top + art_height;
         let code = RECT {
             left: art_left,
             top: art_top,
             right: art_right,
             bottom: art_bottom,
         };
+        let code_width = code.right - code.left;
+        let code_height = code.bottom - code.top;
+
         self.gradient_card(hdc, code, s(9), ui(23, 37, 79), ui(12, 26, 57));
         self.card_outline(hdc, code, s(9), ui(64, 91, 177));
+        let chrome_height = if compact { 24 } else { 30 };
         Self::fill(
             hdc,
             RECT {
                 left: code.left,
-                top: code.top + s(30),
+                top: code.top + s(chrome_height),
                 right: code.right,
-                bottom: code.top + s(31),
+                bottom: code.top + s(chrome_height + 1),
             },
             ui(52, 75, 134),
         );
+        Self::fill(
+            hdc,
+            RECT {
+                left: code.left + s(42),
+                top: code.top + s(chrome_height + 1),
+                right: code.left + s(43),
+                bottom: code.bottom - s(1),
+            },
+            ui(45, 68, 120),
+        );
         for index in 0..3 {
-            self.ring_glyph(
+            let size = s(if compact { 5 } else { 6 });
+            Self::rounded_fill(
                 hdc,
-                code.left + s(16 + index * 16),
-                code.top + s(13),
-                s(6),
+                RECT {
+                    left: code.left + s(16 + index * 15),
+                    top: code.top + s(if compact { 10 } else { 13 }),
+                    right: code.left + s(16 + index * 15) + size,
+                    bottom: code.top + s(if compact { 10 } else { 13 }) + size,
+                },
+                size,
                 ui(86, 127, 214),
             );
         }
@@ -695,97 +721,93 @@ impl App {
             ui(42, 139, 221),
             ui(50, 91, 163),
         ];
-        for index in 0..6 {
-            let y = code.top + s(47 + index * 17);
+        let code_rows = if compact { 5 } else { 6 };
+        let row_top = if compact { 34 } else { 47 };
+        let row_gap = if compact { 14 } else { 17 };
+        let row_height = if compact { 5 } else { 6 };
+        for index in 0..code_rows {
+            let y = code.top + s(row_top + index * row_gap);
             Self::rounded_fill(
                 hdc,
                 RECT {
-                    left: code.left + s(18),
+                    left: code.left + s(12),
                     top: y,
-                    right: code.left + s(25),
-                    bottom: y + s(6),
+                    right: code.left + s(30),
+                    bottom: y + s(row_height),
                 },
                 s(2),
                 ui(42, 69, 125),
             );
-            let width = s(45 + ((index * 19) % 58));
+            let width = if compact {
+                s(40 + ((index * 17) % 42))
+            } else {
+                s(55 + ((index * 19) % 48))
+            };
             Self::rounded_fill(
                 hdc,
                 RECT {
-                    left: code.left + s(36),
+                    left: code.left + s(54),
                     top: y,
-                    right: code.left + s(36) + width,
-                    bottom: y + s(6),
+                    right: code.left + s(54) + width,
+                    bottom: y + s(row_height),
                 },
                 s(3),
                 line_colors[index as usize % line_colors.len()],
             );
         }
-        let bolt_x = code.right - s(74);
-        let bolt_y = code.top + s(52);
-        let bolt = [
-            POINT {
-                x: bolt_x + s(35),
-                y: bolt_y,
-            },
-            POINT {
-                x: bolt_x + s(4),
-                y: bolt_y + s(51),
-            },
-            POINT {
-                x: bolt_x + s(27),
-                y: bolt_y + s(51),
-            },
-            POINT {
-                x: bolt_x + s(14),
-                y: bolt_y + s(90),
-            },
-            POINT {
-                x: bolt_x + s(61),
-                y: bolt_y + s(34),
-            },
-            POINT {
-                x: bolt_x + s(38),
-                y: bolt_y + s(34),
-            },
-        ];
-        unsafe {
-            let brush = CreateSolidBrush(ui(119, 76, 244));
-            let old_brush = SelectObject(hdc, brush);
-            let old_pen = SelectObject(hdc, GetStockObject(NULL_PEN));
-            Polygon(hdc, bolt.as_ptr(), bolt.len() as i32);
-            SelectObject(hdc, old_pen);
-            SelectObject(hdc, old_brush);
-            DeleteObject(brush);
-        }
+        let bolt_x = code.left + code_width * 71 / 100;
+        let bolt_y = code.top + code_height * 26 / 100;
+        let bolt =
+            [(51, 0), (0, 61), (26, 61), (13, 104), (62, 45), (36, 45)].map(|(x, y)| POINT {
+                x: bolt_x + s(x),
+                y: bolt_y + s(y),
+            });
+        self.welcome_lightning_bolt(hdc, &bolt);
         unsafe { SelectObject(hdc, self.ui_font) };
         unsafe { SetTextCharacterExtra(hdc, s(2)) };
+        let labels_left = code.right + s(21);
         for (index, label) in ["CODE", "BUILD", "DEBUG", "CREATE"].iter().enumerate() {
             Self::label(
                 hdc,
                 label,
-                panel.right - s(70),
-                panel.top + s(80 + index as i32 * 22),
+                labels_left,
+                code.top + s(58 + index as i32 * 22),
                 ui(128, 151, 212),
                 clip,
             );
         }
-        Self::label(
+        Self::fill(
             hdc,
-            "A BRIGHTER",
-            panel.right - s(122),
-            panel.bottom - s(42),
-            ui(105, 128, 186),
-            clip,
+            RECT {
+                left: labels_left,
+                top: code.top + s(156),
+                right: labels_left + s(22),
+                bottom: code.top + s(157),
+            },
+            ui(74, 137, 224),
         );
-        Self::label(
-            hdc,
-            "DEVELOPMENT TOMORROW",
-            panel.right - s(252),
-            panel.bottom - s(25),
-            ui(105, 128, 186),
-            clip,
-        );
+        if !compact {
+            unsafe { SetTextCharacterExtra(hdc, 0) };
+            let tagline_right = code.right + s(89);
+            let first = "A BRIGHTER";
+            let second = "DEVELOPMENT TOMORROW";
+            Self::label(
+                hdc,
+                first,
+                tagline_right - self.text_width(hdc, first),
+                code.top + s(178),
+                ui(105, 128, 186),
+                clip,
+            );
+            Self::label(
+                hdc,
+                second,
+                tagline_right - self.text_width(hdc, second),
+                code.top + s(197),
+                ui(105, 128, 186),
+                clip,
+            );
+        }
         unsafe { SetTextCharacterExtra(hdc, 0) };
     }
 
@@ -802,9 +824,9 @@ impl App {
         unsafe { SelectObject(hdc, self.brand_font) };
         self.clock_glyph(
             hdc,
-            panel.left + s(16),
-            panel.top + s(17),
-            s(17),
+            panel.left + s(10),
+            panel.top + s(16),
+            s(19),
             self.theme.blue,
         );
         self.label_mid(
@@ -816,15 +838,27 @@ impl App {
             clip,
         );
         unsafe { SelectObject(hdc, self.ui_font) };
-        let see_all = "View all  \u{2192}";
-        let see_all_width = self.text_width(hdc, see_all);
-        self.label_mid(
+        if panel.right - panel.left >= s(320) {
+            let see_all = "View all  \u{2192}";
+            let see_all_width = self.text_width(hdc, see_all);
+            self.label_mid(
+                hdc,
+                see_all,
+                panel.right - s(23) - see_all_width,
+                panel.top + s(26),
+                self.theme.muted,
+                clip,
+            );
+        }
+        Self::fill(
             hdc,
-            see_all,
-            panel.right - s(18) - see_all_width,
-            panel.top + s(26),
-            self.theme.muted,
-            clip,
+            RECT {
+                left: panel.left + s(10),
+                top: panel.top + s(PANEL_HEADER_H),
+                right: panel.right - s(10),
+                bottom: panel.top + s(PANEL_HEADER_H) + s(1).max(1),
+            },
+            self.theme.edge,
         );
         if layout.recent_rows == 0 {
             Self::label(
@@ -843,23 +877,31 @@ impl App {
                 left: panel.left + s(8),
                 top,
                 right: panel.right - s(8),
-                bottom: top + s(RECENT_ROW_H) - s(4),
+                bottom: top + s(RECENT_ROW_H),
             };
-            Self::rounded_fill(hdc, row, s(8), self.theme.active_bg);
-            if !self.icons.draw_generic(
-                hdc,
-                GenericIcon::Folder,
-                row.left + s(12),
-                top + s(15),
-                s(17),
-            ) {
-                self.draw_vector_folder(hdc, row.left + s(12), top + s(15), s(17), false);
+            if index > 0 {
+                Self::fill(
+                    hdc,
+                    RECT {
+                        left: panel.left + s(10),
+                        top,
+                        right: panel.right - s(10),
+                        bottom: top + s(1).max(1),
+                    },
+                    self.theme.edge,
+                );
             }
-            let text_left = row.left + s(40);
+            self.welcome_folder_glyph(hdc, row.left + s(20), top + s(13), s(26), ui(79, 142, 242));
+            let text_left = row.left + s(71);
+            let show_age = panel.right - panel.left >= s(340);
             let row_clip = RECT {
                 left: text_left,
                 top: row.top,
-                right: row.right - s(116),
+                right: if show_age {
+                    row.right - s(116)
+                } else {
+                    row.right - s(24)
+                },
                 bottom: row.bottom,
             };
             Self::label(
@@ -878,23 +920,28 @@ impl App {
                 self.theme.muted,
                 row_clip,
             );
-            let age = recent_age(path);
-            let age_width = self.text_width(hdc, &age);
-            self.label_mid(
-                hdc,
-                &age,
-                row.right - s(28) - age_width,
-                (row.top + row.bottom) / 2,
-                self.theme.muted,
-                row,
-            );
-            self.chevron(hdc, row.right - s(17), (row.top + row.bottom) / 2, false);
+            if show_age {
+                let age = recent_age(path);
+                let age_width = self.text_width(hdc, &age);
+                self.label_mid(
+                    hdc,
+                    &age,
+                    row.right - s(59) - age_width,
+                    (row.top + row.bottom) / 2,
+                    self.theme.muted,
+                    row,
+                );
+            }
+            self.chevron(hdc, row.right - s(26), (row.top + row.bottom) / 2, false);
         }
     }
 
     fn paint_welcome_quick(&self, hdc: HDC, layout: &WelcomeLayout) {
         let s = |value: i32| self.scale(value);
         let panel = layout.quick_panel;
+        if panel.right <= panel.left || panel.bottom <= panel.top {
+            return;
+        }
         self.panel_card(hdc, panel, s(9), themed(WELCOME_CARD_EDGE), themed(CARD_BG));
         let clip = RECT {
             left: panel.left + s(14),
@@ -906,17 +953,27 @@ impl App {
         self.rail_icon(
             hdc,
             5,
-            panel.left + s(14),
+            panel.left + s(21),
             panel.top + s(17),
             self.theme.violet,
         );
         self.label_mid(
             hdc,
             "Quick Actions",
-            panel.left + s(42),
+            panel.left + s(59),
             panel.top + s(26),
             self.theme.text,
             clip,
+        );
+        Self::fill(
+            hdc,
+            RECT {
+                left: panel.left + s(18),
+                top: panel.top + s(PANEL_HEADER_H),
+                right: panel.right - s(18),
+                bottom: panel.top + s(PANEL_HEADER_H) + s(1).max(1),
+            },
+            self.theme.edge,
         );
         unsafe { SelectObject(hdc, self.ui_font) };
         for (index, (label, shortcut, _)) in QUICK.iter().take(layout.quick_rows).enumerate() {
@@ -926,89 +983,94 @@ impl App {
                 Self::fill(
                     hdc,
                     RECT {
-                        left: panel.left + s(14),
+                        left: panel.left + s(18),
                         top,
-                        right: panel.right - s(14),
+                        right: panel.right - s(18),
                         bottom: top + s(1).max(1),
                     },
                     self.theme.edge,
                 );
             }
+            let show_shortcut = panel.right - panel.left >= s(220);
             let chip_width = self.text_width(hdc, shortcut) + s(16);
             let chip = RECT {
-                left: panel.right - s(14) - chip_width,
+                left: panel.right - s(27) - chip_width,
                 top: middle - s(11),
-                right: panel.right - s(14),
+                right: panel.right - s(27),
                 bottom: middle + s(11),
             };
-            Self::rounded_fill(hdc, chip, s(5), themed(CHIP_BG));
-            self.label_mid(
-                hdc,
-                shortcut,
-                chip.left + s(8),
-                middle,
-                self.theme.muted,
-                clip,
-            );
+            if show_shortcut {
+                Self::rounded_fill(hdc, chip, s(5), themed(CHIP_BG));
+                self.label_mid(
+                    hdc,
+                    shortcut,
+                    chip.left + s(8),
+                    middle,
+                    self.theme.muted,
+                    clip,
+                );
+            }
             match index {
                 0 | 1 => {
                     if !self.icons.draw_generic(
                         hdc,
                         GenericIcon::File,
-                        panel.left + s(16),
+                        panel.left + s(25),
                         middle - s(9),
                         s(18),
                     ) {
                         self.draw_vector_file(
                             hdc,
                             std::path::Path::new("untitled"),
-                            panel.left + s(16),
+                            panel.left + s(25),
                             middle - s(9),
                             s(18),
                         );
                     }
                 }
                 2 => {
-                    if !self.icons.draw_generic(
+                    self.welcome_folder_glyph(
                         hdc,
-                        GenericIcon::Folder,
-                        panel.left + s(16),
-                        middle - s(9),
+                        panel.left + s(25),
+                        middle - s(10),
                         s(18),
-                    ) {
-                        self.draw_vector_folder(
-                            hdc,
-                            panel.left + s(16),
-                            middle - s(9),
-                            s(18),
-                            false,
-                        );
-                    }
+                        ui(139, 174, 225),
+                    );
                 }
                 3 => Self::label(
                     hdc,
                     "\u{2318}",
-                    panel.left + s(16),
+                    panel.left + s(25),
                     middle - s(11),
                     self.theme.muted,
                     clip,
                 ),
-                4 => self.rail_icon(hdc, 1, panel.left + s(16), middle - s(9), self.theme.muted),
+                4 => self.rail_icon(hdc, 1, panel.left + s(25), middle - s(9), self.theme.muted),
                 _ => self.prompt_glyph(
                     hdc,
-                    panel.left + s(16),
+                    panel.left + s(25),
                     middle - s(9),
                     s(18),
                     self.theme.muted,
                 ),
             }
+            let label_clip = RECT {
+                left: panel.left + s(69),
+                top,
+                right: if show_shortcut {
+                    chip.left - s(8)
+                } else {
+                    panel.right - s(12)
+                },
+                bottom: top + s(QUICK_ROW_H),
+            };
             self.label_mid(
                 hdc,
                 label,
-                panel.left + s(42),
+                panel.left + s(69),
                 middle,
                 self.theme.text,
-                clip,
+                label_clip,
             );
         }
     }
@@ -1029,7 +1091,7 @@ impl App {
                 panel.left + s(18),
                 panel.top + s(17),
                 s(18),
-                ui(245, 205, 110),
+                self.theme.text,
             );
             self.label_mid(
                 hdc,
@@ -1038,6 +1100,16 @@ impl App {
                 panel.top + s(27),
                 self.theme.text,
                 clip,
+            );
+            Self::fill(
+                hdc,
+                RECT {
+                    left: panel.left + s(18),
+                    top: panel.top + s(PANEL_HEADER_H),
+                    right: panel.right - s(18),
+                    bottom: panel.top + s(PANEL_HEADER_H) + s(1).max(1),
+                },
+                self.theme.edge,
             );
             let step_height =
                 (panel.bottom - panel.top - s(PANEL_HEADER_H) - s(8)) / STEPS.len() as i32;
@@ -1122,39 +1194,58 @@ impl App {
         Self::fill(
             hdc,
             RECT {
-                left: community.left + s(68),
+                left: community.left + s(82),
                 top: community.top + s(14),
-                right: community.left + s(69),
+                right: community.left + s(83),
                 bottom: community.bottom - s(14),
             },
             ui(111, 86, 219),
         );
-        unsafe { SelectObject(hdc, self.brand_font) };
-        self.label_mid(
-            hdc,
-            "Join the Community",
-            community.left + s(92),
-            (community.top + community.bottom) / 2,
-            self.theme.text,
-            clip,
-        );
-        unsafe { SelectObject(hdc, self.ui_font) };
-        self.label_mid(
-            hdc,
-            "Report issues, request features and read the source.",
-            community.left + s(270),
-            (community.top + community.bottom) / 2,
-            ui(186, 200, 230),
-            clip,
-        );
+        let community_width = community.right - community.left;
+        let narrow = community_width < s(520);
+        let button_width = if narrow { s(138) } else { s(192) };
         let button = RECT {
-            left: community.right - s(210),
+            left: community.right - s(12) - button_width,
             top: community.top + s(12),
             right: community.right - s(12),
             bottom: community.bottom - s(12),
         };
+        unsafe { SelectObject(hdc, self.brand_font) };
+        self.label_mid(
+            hdc,
+            if narrow {
+                "Community"
+            } else {
+                "Join the Community"
+            },
+            community.left + s(104),
+            (community.top + community.bottom) / 2,
+            self.theme.text,
+            RECT {
+                right: button.left - s(10),
+                ..clip
+            },
+        );
+        unsafe { SelectObject(hdc, self.ui_font) };
+        if community_width >= s(820) {
+            self.label_mid(
+                hdc,
+                "Report issues, request features and read the source.",
+                community.left + s(271),
+                (community.top + community.bottom) / 2,
+                ui(186, 200, 230),
+                RECT {
+                    right: button.left - s(12),
+                    ..clip
+                },
+            );
+        }
         self.panel_card(hdc, button, s(6), ui(91, 75, 222), ui(34, 38, 103));
-        let label = "Open Community  \u{2197}";
+        let label = if narrow {
+            "Open  \u{2197}"
+        } else {
+            "Open Community  \u{2197}"
+        };
         let label_width = self.text_width(hdc, label);
         self.label_mid(
             hdc,
@@ -1193,14 +1284,16 @@ impl App {
         self.label_mid(hdc, &left_text, s(16), middle, self.theme.muted, clip);
         let hint = "Ctrl+O file  \u{2022}  Ctrl+N new  \u{2022}  Ctrl+Shift+O folder";
         let width = self.text_width(hdc, hint);
-        self.label_mid(
-            hdc,
-            hint,
-            rect.right - s(16) - width,
-            middle,
-            self.theme.muted,
-            clip,
-        );
+        if rect.right >= width + s(180) {
+            self.label_mid(
+                hdc,
+                hint,
+                rect.right - s(16) - width,
+                middle,
+                self.theme.muted,
+                clip,
+            );
+        }
     }
 
     // --- small vector glyphs, drawn to match the hand-drawn rail icons ---
@@ -1217,6 +1310,68 @@ impl App {
             SelectObject(hdc, previous_brush);
             SelectObject(hdc, previous_pen);
             DeleteObject(pen);
+        }
+    }
+
+    fn welcome_lightning_bolt(&self, hdc: HDC, bolt: &[POINT; 6]) {
+        let channel = |color: u32, shift: u32| (((color >> shift) & 0xff) as u16) << 8;
+        let colors = [
+            ui(105, 125, 249),
+            ui(180, 69, 235),
+            ui(125, 78, 241),
+            ui(18, 207, 240),
+            ui(43, 182, 247),
+            ui(137, 87, 245),
+        ];
+        let vertices: [TRIVERTEX; 6] = std::array::from_fn(|index| TRIVERTEX {
+            x: bolt[index].x,
+            y: bolt[index].y,
+            Red: channel(colors[index], 0),
+            Green: channel(colors[index], 8),
+            Blue: channel(colors[index], 16),
+            Alpha: 0,
+        });
+        let mesh = [
+            GRADIENT_TRIANGLE {
+                Vertex1: 5,
+                Vertex2: 0,
+                Vertex3: 1,
+            },
+            GRADIENT_TRIANGLE {
+                Vertex1: 5,
+                Vertex2: 1,
+                Vertex3: 2,
+            },
+            GRADIENT_TRIANGLE {
+                Vertex1: 5,
+                Vertex2: 2,
+                Vertex3: 3,
+            },
+            GRADIENT_TRIANGLE {
+                Vertex1: 5,
+                Vertex2: 3,
+                Vertex3: 4,
+            },
+        ];
+        unsafe {
+            GradientFill(
+                hdc,
+                vertices.as_ptr(),
+                vertices.len() as u32,
+                mesh.as_ptr().cast(),
+                mesh.len() as u32,
+                GRADIENT_FILL_TRIANGLE,
+            );
+
+            let outline = CreatePen(PS_SOLID, self.scale(1).max(1), ui(91, 103, 225));
+            if !outline.is_null() {
+                let previous_pen = SelectObject(hdc, outline);
+                let previous_brush = SelectObject(hdc, GetStockObject(NULL_BRUSH));
+                Polygon(hdc, bolt.as_ptr(), bolt.len() as i32);
+                SelectObject(hdc, previous_brush);
+                SelectObject(hdc, previous_pen);
+                DeleteObject(outline);
+            }
         }
     }
 
@@ -1267,6 +1422,88 @@ impl App {
             LineTo(hdc, x + size * 3 / 5, y + size * 3 / 4);
             MoveToEx(hdc, x + size * 2 / 5, y + size, null_mut());
             LineTo(hdc, x + size * 3 / 5, y + size);
+        });
+    }
+
+    fn welcome_folder_glyph(&self, hdc: HDC, x: i32, y: i32, size: i32, color: u32) {
+        let u = |value: i32| value * size / 16;
+        let points = [
+            POINT {
+                x: x + u(1),
+                y: y + u(3),
+            },
+            POINT {
+                x: x + u(6),
+                y: y + u(3),
+            },
+            POINT {
+                x: x + u(8),
+                y: y + u(5),
+            },
+            POINT {
+                x: x + u(15),
+                y: y + u(5),
+            },
+            POINT {
+                x: x + u(15),
+                y: y + u(14),
+            },
+            POINT {
+                x: x + u(1),
+                y: y + u(14),
+            },
+        ];
+        unsafe {
+            let brush = CreateSolidBrush(color);
+            if brush.is_null() {
+                let _ = self
+                    .icons
+                    .draw_generic(hdc, GenericIcon::Folder, x, y, size);
+                return;
+            }
+            let previous_brush = SelectObject(hdc, brush);
+            let previous_pen = SelectObject(hdc, GetStockObject(NULL_PEN));
+            Polygon(hdc, points.as_ptr(), points.len() as i32);
+            SelectObject(hdc, previous_pen);
+            SelectObject(hdc, previous_brush);
+            DeleteObject(brush);
+        }
+    }
+
+    fn welcome_folder_outline(&self, hdc: HDC, x: i32, y: i32, size: i32, color: u32) {
+        let u = |value: i32| value * size / 16;
+        self.stroke(hdc, color, |hdc| unsafe {
+            let points = [
+                POINT {
+                    x: x + u(1),
+                    y: y + u(3),
+                },
+                POINT {
+                    x: x + u(6),
+                    y: y + u(3),
+                },
+                POINT {
+                    x: x + u(8),
+                    y: y + u(5),
+                },
+                POINT {
+                    x: x + u(15),
+                    y: y + u(5),
+                },
+                POINT {
+                    x: x + u(15),
+                    y: y + u(14),
+                },
+                POINT {
+                    x: x + u(1),
+                    y: y + u(14),
+                },
+                POINT {
+                    x: x + u(1),
+                    y: y + u(3),
+                },
+            ];
+            Polyline(hdc, points.as_ptr(), points.len() as i32);
         });
     }
 

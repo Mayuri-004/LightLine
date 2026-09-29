@@ -978,11 +978,11 @@ impl App {
     // Display sizes used by the welcome screen's hero block. They are far
     // larger than brand_font, which is sized for tab strips and headers.
     pub(super) fn title_font_for_dpi(dpi: u32, zoom: i32) -> HFONT {
-        Self::display_font(23, dpi, zoom)
+        Self::display_font(30, dpi, zoom)
     }
 
     pub(super) fn hero_font_for_dpi(dpi: u32, zoom: i32) -> HFONT {
-        Self::display_font(38, dpi, zoom)
+        Self::display_font(46, dpi, zoom)
     }
 
     fn display_font(points: i32, dpi: u32, zoom: i32) -> HFONT {
