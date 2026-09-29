@@ -1,11 +1,12 @@
 //! Tree-sitter colors for Rust and Python, with bounded lexical fallback for large Rust files.
 //! Oversized Python files (see `PARSE_LIMIT`) render as plain text instead.
 
-use crate::document::{Document, TextChange};
-use std::marker::PhantomData;
+use crate::document::{Document, Pos, TextChange};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::thread;
-use tree_sitter::{InputEdit, Parser, Point, Query, QueryCursor, StreamingIterator, Tree};
+use tree_sitter::{
+    InputEdit, Language, Parser, Point, Query, QueryCursor, StreamingIterator, Tree,
+};
 
 const PARSE_LIMIT: usize = 128 * 1024;
 
@@ -105,49 +106,236 @@ pub fn highlight_snippet(language: &str, source: &str) -> Option<Vec<Vec<Span>>>
     if source.len() > SNIPPET_LIMIT {
         return None;
     }
-    match language.trim().to_ascii_lowercase().as_str() {
-        "rust" | "rs" => ParsedRust::new(source.to_string()).map(|parsed| parsed.all_spans()),
-        "python" | "py" | "python3" => {
-            ParsedPython::new(source.to_string()).map(|parsed| parsed.all_spans())
+    let grammar = match language.trim().to_ascii_lowercase().as_str() {
+        "rust" | "rs" => RUST,
+        "python" | "py" | "python3" => PYTHON,
+        _ => return None,
+    };
+    Parsed::new(grammar, source.to_string()).map(|parsed| parsed.spans)
+}
+
+/// A tree-sitter grammar and how its highlight captures map to colors.
+#[derive(Clone, Copy)]
+struct Grammar {
+    language: fn() -> Language,
+    highlights: &'static str,
+    color: fn(&str) -> Option<Color>,
+}
+
+fn rust_language() -> Language {
+    tree_sitter_rust::LANGUAGE.into()
+}
+
+fn python_language() -> Language {
+    tree_sitter_python::LANGUAGE.into()
+}
+
+const RUST: Grammar = Grammar {
+    language: rust_language,
+    highlights: tree_sitter_rust::HIGHLIGHTS_QUERY,
+    color: rust_capture_color,
+};
+
+const PYTHON: Grammar = Grammar {
+    language: python_language,
+    highlights: tree_sitter_python::HIGHLIGHTS_QUERY,
+    color: python_capture_color,
+};
+
+/// One document's parse on the worker thread, kept up to date edit by edit:
+/// its text, tree and colors. Each keystroke used to send the worker a copy
+/// of the whole document, which it diffed against the last copy before
+/// reparsing and then recolored every line; now it gets the edit, and
+/// recolors only the lines the edit could have changed.
+struct Parsed {
+    parser: Parser,
+    tree: Tree,
+    query: Query,
+    color: fn(&str) -> Option<Color>,
+    source: String,
+    // Where each line of `source` starts, in bytes.
+    line_starts: Vec<usize>,
+    // The colors of each line of `source`.
+    spans: Vec<Vec<Span>>,
+    // Lines edited since the last parse (first, last); always recolored.
+    edited: Option<(usize, usize)>,
+}
+
+impl Parsed {
+    fn new(grammar: Grammar, source: String) -> Option<Self> {
+        let language = (grammar.language)();
+        let mut parser = Parser::new();
+        parser.set_language(&language).ok()?;
+        let query = Query::new(&language, grammar.highlights).ok()?;
+        let tree = parser.parse(&source, None)?;
+        let spans = spans_from_query(&query, &tree, &source, grammar.color);
+        let line_starts = std::iter::once(0)
+            .chain(source.match_indices('\n').map(|(at, _)| at + 1))
+            .collect();
+        Some(Self {
+            parser,
+            tree,
+            query,
+            color: grammar.color,
+            source,
+            line_starts,
+            spans,
+            edited: None,
+        })
+    }
+
+    fn offset(&self, pos: Pos) -> Option<usize> {
+        let byte = self.line_starts.get(pos.line)? + pos.byte;
+        (byte <= line_end(&self.source, &self.line_starts, pos.line)
+            && self.source.is_char_boundary(byte))
+        .then_some(byte)
+    }
+
+    /// Applies one edit to the text and the tree and moves the colors along
+    /// with it. False when the edit doesn't fit the text, which would mean
+    /// this copy no longer matches the document.
+    fn apply(&mut self, change: &TextChange) -> bool {
+        let (Some(start), Some(old_end)) = (self.offset(change.start), self.offset(change.end))
+        else {
+            return false;
+        };
+        if start > old_end || !remap_spans(&mut self.spans, change) {
+            return false;
         }
-        _ => None,
+        let new_end_pos = change.new_end();
+        let new_end = start + change.text.len();
+        self.source.replace_range(start..old_end, &change.text);
+        self.tree.edit(&InputEdit {
+            start_byte: start,
+            old_end_byte: old_end,
+            new_end_byte: new_end,
+            start_position: Point::new(change.start.line, change.start.byte),
+            old_end_position: Point::new(change.end.line, change.end.byte),
+            new_end_position: Point::new(new_end_pos.line, new_end_pos.byte),
+        });
+        // The edited lines' starts are replaced; later lines move with the text.
+        let later: Vec<usize> = self.line_starts[change.end.line + 1..]
+            .iter()
+            .map(|line_start| line_start - old_end + new_end)
+            .collect();
+        self.line_starts.truncate(change.start.line + 1);
+        self.line_starts.extend(
+            change
+                .text
+                .match_indices('\n')
+                .map(|(at, _)| start + at + 1),
+        );
+        self.line_starts.extend(later);
+        // Earlier edits' lines, renumbered, joined with this edit's.
+        let renumber = |line: usize| {
+            if line > change.end.line {
+                line - change.end.line + new_end_pos.line
+            } else if line > change.start.line {
+                new_end_pos.line
+            } else {
+                line
+            }
+        };
+        let (mut first, mut last) = (change.start.line, new_end_pos.line);
+        if let Some((earlier_first, earlier_last)) = self.edited {
+            first = first.min(renumber(earlier_first));
+            last = last.max(renumber(earlier_last));
+        }
+        self.edited = Some((first, last));
+        self.spans.len() == self.line_starts.len()
+    }
+
+    /// Reparses after edits and recolors the lines they could have changed:
+    /// the edited lines, and those whose syntax changed (an opened string or
+    /// comment recolors everything after it).
+    fn reparse(&mut self) -> bool {
+        let Some(tree) = self.parser.parse(&self.source, Some(&self.tree)) else {
+            return false;
+        };
+        let mut rows: Vec<(usize, usize)> = self
+            .tree
+            .changed_ranges(&tree)
+            .map(|range| (range.start_point.row, range.end_point.row))
+            .collect();
+        self.tree = tree;
+        rows.extend(self.edited.take());
+        rows.sort_unstable();
+        let mut merged: Vec<(usize, usize)> = Vec::new();
+        for (first, last) in rows {
+            match merged.last_mut() {
+                Some(previous) if first <= previous.1 + 1 => previous.1 = previous.1.max(last),
+                _ => merged.push((first, last)),
+            }
+        }
+        for (first, last) in merged {
+            self.recolor(first, last);
+        }
+        true
+    }
+
+    // Recomputes the colors of lines `first..=last` from the tree.
+    fn recolor(&mut self, first: usize, last: usize) {
+        let Self {
+            tree,
+            query,
+            color,
+            source,
+            line_starts,
+            spans,
+            ..
+        } = self;
+        if first >= spans.len() {
+            return;
+        }
+        let last = last.min(spans.len() - 1);
+        for line in &mut spans[first..=last] {
+            line.clear();
+        }
+        let mut cursor = QueryCursor::new();
+        cursor.set_byte_range(line_starts[first]..line_end(source, line_starts, last));
+        let mut captures = cursor.captures(query, tree.root_node(), source.as_bytes());
+        while let Some((matched, capture_index)) = captures.next() {
+            let capture = matched.captures()[*capture_index];
+            let Some(span_color) = color(query.capture_names()[capture.index as usize]) else {
+                continue;
+            };
+            let (start, end) = (capture.node.start_position(), capture.node.end_position());
+            for line in start.row.max(first)..=end.row.min(last) {
+                let text = &source[line_starts[line]..line_end(source, line_starts, line)];
+                push_capture(&mut spans[line], text, line, start, end, span_color);
+            }
+        }
     }
 }
 
-/// Parses one incremental snapshot on a background worker thread.
-trait LangParser: Sized {
-    fn new(source: String) -> Option<Self>;
-    fn refresh(&mut self, next: String) -> bool;
-    fn all_spans(&self) -> Vec<Vec<Span>>;
+// Where line `line` ends (before its newline).
+fn line_end(source: &str, line_starts: &[usize], line: usize) -> usize {
+    line_starts
+        .get(line + 1)
+        .map_or(source.len(), |next| next - 1)
 }
 
-fn compute_edit(before_src: &str, after_src: &str) -> InputEdit {
-    let before = before_src.as_bytes();
-    let after = after_src.as_bytes();
-    let mut start = before.iter().zip(after).take_while(|(a, b)| a == b).count();
-    while !before_src.is_char_boundary(start) || !after_src.is_char_boundary(start) {
-        start -= 1;
-    }
-    let mut suffix = before[start..]
-        .iter()
-        .rev()
-        .zip(after[start..].iter().rev())
-        .take_while(|(a, b)| a == b)
-        .count();
-    while !before_src.is_char_boundary(before.len() - suffix)
-        || !after_src.is_char_boundary(after.len() - suffix)
-    {
-        suffix -= 1;
-    }
-    let old_end = before.len() - suffix;
-    let new_end = after.len() - suffix;
-    InputEdit {
-        start_byte: start,
-        old_end_byte: old_end,
-        new_end_byte: new_end,
-        start_position: point_at(before_src, start),
-        old_end_position: point_at(before_src, old_end),
-        new_end_position: point_at(after_src, new_end),
+// Adds the part of a capture from `start` to `end` that lies on `line`.
+fn push_capture(
+    spans: &mut Vec<Span>,
+    text: &str,
+    line: usize,
+    start: Point,
+    end: Point,
+    color: Color,
+) {
+    let from = if start.row == line { start.column } else { 0 };
+    let to = if end.row == line {
+        end.column
+    } else {
+        text.len()
+    };
+    if from < to && to <= text.len() && text.is_char_boundary(from) && text.is_char_boundary(to) {
+        spans.push(Span {
+            start: from,
+            end: to,
+            color,
+        });
     }
 }
 
@@ -214,24 +402,7 @@ fn spans_from_query(
         let start = capture.node.start_position();
         let end = capture.node.end_position();
         for line in start.row..=end.row.min(lines.len().saturating_sub(1)) {
-            let source = lines[line];
-            let from = if start.row == line { start.column } else { 0 };
-            let to = if end.row == line {
-                end.column
-            } else {
-                source.len()
-            };
-            if from < to
-                && to <= source.len()
-                && source.is_char_boundary(from)
-                && source.is_char_boundary(to)
-            {
-                output[line].push(Span {
-                    start: from,
-                    end: to,
-                    color,
-                });
-            }
+            push_capture(&mut output[line], lines[line], line, start, end, color);
         }
     }
     output
@@ -295,25 +466,29 @@ enum State {
 pub struct RustSyntax {
     // states[i] is the lexer state at the beginning of line i.
     states: Vec<State>,
-    worker: Option<Worker<ParsedRust>>,
+    worker: Option<Worker>,
     tree_spans: Option<Vec<Vec<Span>>>,
     parser_attempted: bool,
-    dirty: bool,
+    // The worker needs the whole text again: it has none yet, or a change
+    // came through that it wasn't sent as an edit.
+    reset: bool,
     // A parse of `revision` is in flight; meanwhile `tree_spans` holds the
     // previous result, remapped through every edit made since.
     pending: bool,
     revision: u64,
 }
 
-struct Worker<P> {
-    jobs: Sender<Job>,
-    results: Receiver<ResultSet>,
-    _parser: PhantomData<P>,
+// Work for the parser thread. Edits must reach it in order, each one after
+// the text it applies to.
+enum Job {
+    // The whole text: the first parse, or after a reload.
+    Reset { revision: u64, source: String },
+    Edit { revision: u64, change: TextChange },
 }
 
-struct Job {
-    revision: u64,
-    source: String,
+struct Worker {
+    jobs: Sender<Job>,
+    results: Receiver<ResultSet>,
 }
 
 struct ResultSet {
@@ -321,116 +496,56 @@ struct ResultSet {
     spans: Option<Vec<Vec<Span>>>,
 }
 
-struct ParsedRust {
-    parser: Parser,
-    tree: Tree,
-    query: Query,
-    source: String,
-}
-
-impl LangParser for ParsedRust {
-    fn new(source: String) -> Option<Self> {
-        let language = tree_sitter_rust::LANGUAGE.into();
-        let mut parser = Parser::new();
-        parser.set_language(&language).ok()?;
-        let query = Query::new(&language, tree_sitter_rust::HIGHLIGHTS_QUERY).ok()?;
-        let tree = parser.parse(&source, None)?;
-        Some(Self {
-            parser,
-            tree,
-            query,
-            source,
-        })
-    }
-
-    fn refresh(&mut self, next: String) -> bool {
-        if next == self.source {
-            return true;
-        }
-        let edit = compute_edit(&self.source, &next);
-        self.tree.edit(&edit);
-        let Some(tree) = self.parser.parse(&next, Some(&self.tree)) else {
-            return false;
-        };
-        self.tree = tree;
-        self.source = next;
-        true
-    }
-
-    fn all_spans(&self) -> Vec<Vec<Span>> {
-        spans_from_query(&self.query, &self.tree, &self.source, rust_capture_color)
-    }
-}
-
-struct ParsedPython {
-    parser: Parser,
-    tree: Tree,
-    query: Query,
-    source: String,
-}
-
-impl LangParser for ParsedPython {
-    fn new(source: String) -> Option<Self> {
-        let language = tree_sitter_python::LANGUAGE.into();
-        let mut parser = Parser::new();
-        parser.set_language(&language).ok()?;
-        let query = Query::new(&language, tree_sitter_python::HIGHLIGHTS_QUERY).ok()?;
-        let tree = parser.parse(&source, None)?;
-        Some(Self {
-            parser,
-            tree,
-            query,
-            source,
-        })
-    }
-
-    fn refresh(&mut self, next: String) -> bool {
-        if next == self.source {
-            return true;
-        }
-        let edit = compute_edit(&self.source, &next);
-        self.tree.edit(&edit);
-        let Some(tree) = self.parser.parse(&next, Some(&self.tree)) else {
-            return false;
-        };
-        self.tree = tree;
-        self.source = next;
-        true
-    }
-
-    fn all_spans(&self) -> Vec<Vec<Span>> {
-        spans_from_query(&self.query, &self.tree, &self.source, python_capture_color)
-    }
-}
-
-impl<P: LangParser + Send + 'static> Worker<P> {
-    fn start() -> Self {
+impl Worker {
+    fn start(grammar: Grammar) -> Self {
         let (jobs_tx, jobs_rx) = mpsc::channel::<Job>();
         let (results_tx, results_rx) = mpsc::channel::<ResultSet>();
         thread::spawn(move || {
-            let mut parsed: Option<P> = None;
-            while let Ok(mut job) = jobs_rx.recv() {
-                while let Ok(newer) = jobs_rx.try_recv() {
-                    job = newer;
+            let mut parsed: Option<Parsed> = None;
+            while let Ok(job) = jobs_rx.recv() {
+                // Everything queued is applied, then parsed once.
+                let mut jobs = vec![job];
+                jobs.extend(jobs_rx.try_iter());
+                // Nothing before the last reset matters.
+                let from = jobs
+                    .iter()
+                    .rposition(|job| matches!(job, Job::Reset { .. }))
+                    .unwrap_or(0);
+                let mut revision = 0;
+                let mut edited = false;
+                for job in jobs.drain(from..) {
+                    match job {
+                        Job::Reset {
+                            revision: next,
+                            source,
+                        } => {
+                            revision = next;
+                            parsed = Parsed::new(grammar, source);
+                            edited = false;
+                        }
+                        Job::Edit {
+                            revision: next,
+                            change,
+                        } => {
+                            revision = next;
+                            edited = true;
+                            // An edit that doesn't fit means this copy no
+                            // longer matches the document: stop coloring.
+                            if parsed.as_mut().is_some_and(|parsed| !parsed.apply(&change)) {
+                                parsed = None;
+                            }
+                        }
+                    }
                 }
-                let okay = if let Some(parser) = &mut parsed {
-                    parser.refresh(job.source)
-                } else {
-                    parsed = P::new(job.source);
-                    parsed.is_some()
+                let spans = match &mut parsed {
+                    // Grown past the limit by editing: stop, as a file that
+                    // big wouldn't have been parsed when it was opened.
+                    Some(current) if current.source.len() <= PARSE_LIMIT => {
+                        (!edited || current.reparse()).then(|| current.spans.clone())
+                    }
+                    _ => None,
                 };
-                let spans = if okay {
-                    parsed.as_ref().map(P::all_spans)
-                } else {
-                    None
-                };
-                if results_tx
-                    .send(ResultSet {
-                        revision: job.revision,
-                        spans,
-                    })
-                    .is_err()
-                {
+                if results_tx.send(ResultSet { revision, spans }).is_err() {
                     break;
                 }
             }
@@ -438,30 +553,48 @@ impl<P: LangParser + Send + 'static> Worker<P> {
         Self {
             jobs: jobs_tx,
             results: results_rx,
-            _parser: PhantomData,
         }
     }
 }
 
-// Sends the document to the parser thread when it changed, then takes the
-// result for the current revision if it has arrived. A failed parse or a dead
-// worker stops tree-sitter for this document (Rust then uses its lexical
+// Sends an edit to the parser thread; `reset` means the whole text is about
+// to be sent anyway, which includes it.
+fn send_edit(
+    worker: &Option<Worker>,
+    reset: bool,
+    pending: &mut bool,
+    revision: u64,
+    change: &TextChange,
+) {
+    if let Some(worker) = worker.as_ref().filter(|_| !reset) {
+        // A dead worker shows up as a closed channel on the next poll.
+        let _ = worker.jobs.send(Job::Edit {
+            revision,
+            change: change.clone(),
+        });
+        *pending = true;
+    }
+}
+
+// Sends the whole document to the parser thread when it needs it, then takes
+// the result for the current revision if it has arrived. A failed parse or a
+// dead worker stops tree-sitter for this document (Rust then uses its lexical
 // fallback; Python shows plain text).
-fn poll_worker<P>(
-    worker: &mut Option<Worker<P>>,
+fn poll_worker(
+    worker: &mut Option<Worker>,
     tree_spans: &mut Option<Vec<Vec<Span>>>,
-    dirty: &mut bool,
+    reset: &mut bool,
     pending: &mut bool,
     revision: u64,
     document: &Document,
 ) {
     let mut failed = false;
-    if *dirty {
-        *dirty = false;
+    if *reset {
+        *reset = false;
         let sent = within_parse_limit(document)
             && worker.as_ref().is_some_and(|worker| {
                 let source = document.text_range(Default::default(), document.end());
-                worker.jobs.send(Job { revision, source }).is_ok()
+                worker.jobs.send(Job::Reset { revision, source }).is_ok()
             });
         failed = !sent;
         *pending = sent;
@@ -491,16 +624,6 @@ fn poll_worker<P>(
     }
 }
 
-fn point_at(source: &str, byte: usize) -> Point {
-    let prefix = &source.as_bytes()[..byte];
-    let row = prefix.iter().filter(|b| **b == b'\n').count();
-    let column = prefix
-        .iter()
-        .rposition(|b| *b == b'\n')
-        .map_or(prefix.len(), |index| prefix.len() - index - 1);
-    Point::new(row, column)
-}
-
 impl Default for RustSyntax {
     fn default() -> Self {
         Self::new()
@@ -514,7 +637,7 @@ impl RustSyntax {
             worker: None,
             tree_spans: None,
             parser_attempted: false,
-            dirty: false,
+            reset: false,
             pending: false,
             revision: 0,
         }
@@ -522,15 +645,21 @@ impl RustSyntax {
 
     pub fn invalidate_from(&mut self, line: usize) {
         self.states.truncate((line + 1).max(1));
-        self.dirty = true;
+        self.reset = true;
         self.revision = self.revision.wrapping_add(1);
         self.tree_spans = None;
     }
 
     pub fn edited(&mut self, change: &TextChange) {
         self.states.truncate(change.start.line + 1);
-        self.dirty = true;
         self.revision = self.revision.wrapping_add(1);
+        send_edit(
+            &self.worker,
+            self.reset,
+            &mut self.pending,
+            self.revision,
+            change,
+        );
         if let Some(spans) = &mut self.tree_spans
             && !remap_spans(spans, change)
         {
@@ -544,15 +673,15 @@ impl RustSyntax {
         if !self.parser_attempted {
             self.parser_attempted = true;
             if within_parse_limit(document) {
-                self.worker = Some(Worker::start());
-                self.dirty = true;
+                self.worker = Some(Worker::start(RUST));
+                self.reset = true;
             }
         }
         if self.worker.is_some() {
             poll_worker(
                 &mut self.worker,
                 &mut self.tree_spans,
-                &mut self.dirty,
+                &mut self.reset,
                 &mut self.pending,
                 self.revision,
                 document,
@@ -593,10 +722,11 @@ impl RustSyntax {
 }
 
 pub struct PythonSyntax {
-    worker: Option<Worker<ParsedPython>>,
+    worker: Option<Worker>,
     tree_spans: Option<Vec<Vec<Span>>>,
     parser_attempted: bool,
-    dirty: bool,
+    // See RustSyntax::reset.
+    reset: bool,
     // See RustSyntax::pending.
     pending: bool,
     revision: u64,
@@ -614,21 +744,27 @@ impl PythonSyntax {
             worker: None,
             tree_spans: None,
             parser_attempted: false,
-            dirty: false,
+            reset: false,
             pending: false,
             revision: 0,
         }
     }
 
     pub fn invalidate_from(&mut self) {
-        self.dirty = true;
+        self.reset = true;
         self.revision = self.revision.wrapping_add(1);
         self.tree_spans = None;
     }
 
     pub fn edited(&mut self, change: &TextChange) {
-        self.dirty = true;
         self.revision = self.revision.wrapping_add(1);
+        send_edit(
+            &self.worker,
+            self.reset,
+            &mut self.pending,
+            self.revision,
+            change,
+        );
         if let Some(spans) = &mut self.tree_spans
             && !remap_spans(spans, change)
         {
@@ -642,15 +778,15 @@ impl PythonSyntax {
         if !self.parser_attempted {
             self.parser_attempted = true;
             if within_parse_limit(document) {
-                self.worker = Some(Worker::start());
-                self.dirty = true;
+                self.worker = Some(Worker::start(PYTHON));
+                self.reset = true;
             }
         }
         if self.worker.is_some() {
             poll_worker(
                 &mut self.worker,
                 &mut self.tree_spans,
-                &mut self.dirty,
+                &mut self.reset,
                 &mut self.pending,
                 self.revision,
                 document,
@@ -1059,6 +1195,170 @@ mod tests {
                 .iter()
                 .any(|span| span.color == Color::Comment)
         );
+    }
+
+    // Applies `edits` one at a time (or all before one reparse, with
+    // `batched`), checking after each that the colors kept up to date edit
+    // by edit are exactly what coloring the whole text from scratch gives.
+    fn check_incremental(grammar: Grammar, text: &str, edits: &[(Pos, Pos, &str)], batched: bool) {
+        let mut doc = Document::new();
+        doc.replace(Pos::default(), Pos::default(), text);
+        let mut parsed = Parsed::new(grammar, doc.text()).unwrap();
+        for (index, &(start, end, insert)) in edits.iter().enumerate() {
+            doc.replace(start, end, insert);
+            assert!(
+                parsed.apply(doc.last_change().unwrap()),
+                "edit {index} didn't fit"
+            );
+            if batched && index + 1 < edits.len() {
+                continue;
+            }
+            assert!(parsed.reparse());
+            assert_eq!(parsed.source, doc.text(), "text after edit {index}");
+            let expected = full_colors(&mut parsed, &doc.text());
+            assert_eq!(
+                parsed.spans, expected,
+                "colors after edit {index} ({insert:?})"
+            );
+        }
+    }
+
+    fn at(line: usize, byte: usize) -> Pos {
+        Pos { line, byte }
+    }
+
+    // Colors for `text` parsed from scratch, with `parsed`'s parser and
+    // compiled query (compiling a new one per check made the tests slow).
+    // `parsed.tree`, which the next edit builds on, is left as it is.
+    fn full_colors(parsed: &mut Parsed, text: &str) -> Vec<Vec<Span>> {
+        let tree = parsed.parser.parse(text, None).unwrap();
+        spans_from_query(&parsed.query, &tree, text, parsed.color)
+    }
+
+    const RUST_SAMPLE: &str =
+        "fn main() {\n    let x = 1; // one\n    let s = \"two\";\n}\nfn other() -> u32 { 3 }\n";
+
+    #[test]
+    fn rust_incremental_colors_match_a_full_recolor() {
+        let edits: &[(Pos, Pos, &str)] = &[
+            // Opening a block comment turns everything after it into comment...
+            (at(1, 4), at(1, 4), "/* "),
+            // ...and closing it gives the code its colors back.
+            (at(2, 4), at(2, 4), " */"),
+            // A new line, then text typed inside a string.
+            (at(1, 24), at(1, 24), "\n    let y = x + 1;"),
+            (at(3, 15), at(3, 15), "abc"),
+            // An unterminated string, then fixed.
+            (at(5, 0), at(5, 0), "\""),
+            (at(5, 0), at(5, 1), ""),
+            // A whole line deleted, and a replacement across lines.
+            (at(2, 0), at(3, 0), ""),
+            (at(0, 3), at(2, 5), "start() {\n    return;\n}\nfn b"),
+            // Everything deleted, then retyped.
+            (at(0, 0), at(5, 0), ""),
+            (at(0, 0), at(0, 0), "struct Point { x: f64 }\n"),
+        ];
+        check_incremental(RUST, RUST_SAMPLE, edits, false);
+    }
+
+    #[test]
+    fn python_incremental_colors_match_a_full_recolor() {
+        let text =
+            "def greet(name):\n    # say hello\n    return f\"hi {name}\"\n\nclass A:\n    x = 1\n";
+        let edits: &[(Pos, Pos, &str)] = &[
+            // A triple-quoted string opened at the top, then closed.
+            (at(1, 4), at(1, 4), "\"\"\""),
+            (at(3, 0), at(3, 0), "\"\"\""),
+            (at(1, 4), at(1, 7), ""),
+            (at(3, 0), at(3, 3), ""),
+            (at(5, 9), at(5, 9), "\n    y = \"two\"  # note"),
+            (at(0, 4), at(0, 9), "wave"),
+        ];
+        check_incremental(PYTHON, text, edits, false);
+    }
+
+    #[test]
+    fn edits_batched_before_one_reparse_match_a_full_recolor() {
+        // Far-apart edits applied together, as the worker does when it falls
+        // behind: the first one's lines move with the later ones.
+        let edits: &[(Pos, Pos, &str)] = &[
+            (at(4, 0), at(4, 0), "// late\n"),
+            (at(0, 0), at(0, 0), "use std::io;\n\n"),
+            (at(3, 12), at(3, 12), "/* open"),
+        ];
+        check_incremental(RUST, RUST_SAMPLE, edits, true);
+    }
+
+    #[test]
+    fn random_edits_keep_incremental_colors_matching_a_full_recolor() {
+        // Fixed-seed pseudo-random edits made of the pieces most likely to
+        // change colors far from the edit: quotes, comment markers, newlines.
+        let pieces = [
+            "\"",
+            "/*",
+            "*/",
+            "//",
+            "\n",
+            "{",
+            "}",
+            "fn f() ",
+            "let v = 'a';",
+            "r#\"",
+            "\"#",
+            " ",
+            "x",
+        ];
+        let mut seed: u64 = 0x5eed_1234_abcd_ef01;
+        let mut next = |below: usize| {
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            ((seed >> 33) as usize) % below.max(1)
+        };
+        let mut doc = Document::new();
+        doc.replace(Pos::default(), Pos::default(), RUST_SAMPLE);
+        let mut parsed = Parsed::new(RUST, doc.text()).unwrap();
+        for step in 0..300 {
+            let line = next(doc.line_count());
+            let text = doc.line(line);
+            let mut byte = next(text.len() + 1);
+            while !text.is_char_boundary(byte) {
+                byte -= 1;
+            }
+            let start = at(line, byte);
+            // Mostly insertions; sometimes delete a few bytes on the line.
+            let (end, insert) = if next(4) == 0 {
+                let mut end = (byte + next(4)).min(text.len());
+                while !text.is_char_boundary(end) {
+                    end -= 1;
+                }
+                (at(line, end), "")
+            } else {
+                (start, pieces[next(pieces.len())])
+            };
+            let serial = doc.change_serial();
+            doc.replace(start, end, insert);
+            // As in the editor, a replace that changed nothing isn't sent.
+            if doc.change_serial() == serial {
+                continue;
+            }
+            assert!(parsed.apply(doc.last_change().unwrap()), "step {step}");
+            assert!(parsed.reparse());
+            let expected = full_colors(&mut parsed, &doc.text());
+            assert_eq!(parsed.spans, expected, "colors after step {step}");
+        }
+    }
+
+    #[test]
+    fn an_edit_that_does_not_fit_is_refused() {
+        let mut parsed = Parsed::new(RUST, "fn a() {}\n".into()).unwrap();
+        let change = TextChange {
+            serial: 1,
+            start: at(5, 0),
+            end: at(5, 0),
+            start_utf16: 0,
+            end_utf16: 0,
+            text: "x".into(),
+        };
+        assert!(!parsed.apply(&change));
     }
 
     fn settle_python(syntax: &mut PythonSyntax, doc: &Document) {
