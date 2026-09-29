@@ -186,7 +186,16 @@ pub enum Event {
 pub struct Client {
     language: Language,
     root: PathBuf,
-    sender: Sender<Command>,
+    sender: Sender<Input>,
+}
+
+// What a server's worker thread waits for: a command from the editor, or
+// word from the reader thread that the server sent a message. One queue for
+// both lets the worker sleep until there is work; it used to wake every
+// 30 ms to check two queues, all the time a language server was running.
+enum Input {
+    Command(Command),
+    ServerMessage,
 }
 
 #[derive(Clone, Debug)]
@@ -265,7 +274,8 @@ impl Client {
         let (sender, commands) = mpsc::channel();
         let server_root = root.clone();
         let config = server_config(language, python_interpreter.as_deref());
-        thread::spawn(move || run_server(server_root, config, commands, events, wake));
+        let arrivals = sender.clone();
+        thread::spawn(move || run_server(server_root, config, commands, arrivals, events, wake));
         Self {
             language,
             root,
@@ -282,13 +292,13 @@ impl Client {
     }
 
     pub fn send(&self, command: Command) -> bool {
-        self.sender.send(command).is_ok()
+        self.sender.send(Input::Command(command)).is_ok()
     }
 }
 
 impl Drop for Client {
     fn drop(&mut self) {
-        let _ = self.sender.send(Command::Shutdown);
+        let _ = self.sender.send(Input::Command(Command::Shutdown));
     }
 }
 
@@ -486,7 +496,9 @@ fn install_pyright() -> Result<PathBuf, String> {
 fn run_server(
     root: PathBuf,
     config: ServerConfig,
-    commands: Receiver<Command>,
+    commands: Receiver<Input>,
+    // Tells the worker, waiting on `commands`, that a server message arrived.
+    arrivals: Sender<Input>,
     events: Sender<Event>,
     wake: Arc<dyn Fn() + Send + Sync>,
 ) {
@@ -598,20 +610,17 @@ fn run_server(
     let reader = thread::spawn(move || {
         let mut stdout = BufReader::new(stdout);
         loop {
-            match read_packet(&mut stdout) {
-                Ok(Some(message)) => {
-                    if incoming_tx.send(Ok(message)).is_err() {
-                        break;
-                    }
-                }
-                Ok(None) => {
-                    let _ = incoming_tx.send(Err(format!("{reader_name} closed its output")));
-                    break;
-                }
-                Err(error) => {
-                    let _ = incoming_tx.send(Err(format!("LSP read failed: {error}")));
-                    break;
-                }
+            let incoming = match read_packet(&mut stdout) {
+                Ok(Some(message)) => Ok(message),
+                Ok(None) => Err(format!("{reader_name} closed its output")),
+                Err(error) => Err(format!("LSP read failed: {error}")),
+            };
+            let last = incoming.is_err();
+            if incoming_tx.send(incoming).is_err() || arrivals.send(Input::ServerMessage).is_err() {
+                break;
+            }
+            if last {
+                break;
             }
         }
     });
@@ -848,16 +857,26 @@ fn run_server(
                 index += 1;
             }
         }
-        match commands.recv_timeout(Duration::from_millis(30)) {
-            Ok(Command::Shutdown) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
-            Ok(command) if ready => {
+        // Sleep until a command or a server message arrives, or the next
+        // hover retry is due.
+        let next = match hover_retries.iter().map(|(due, _, _)| *due).min() {
+            Some(due) => commands.recv_timeout(due.saturating_duration_since(Instant::now())),
+            None => commands
+                .recv()
+                .map_err(|_| mpsc::RecvTimeoutError::Disconnected),
+        };
+        match next {
+            Ok(Input::Command(Command::Shutdown)) | Err(mpsc::RecvTimeoutError::Disconnected) => {
+                break;
+            }
+            Ok(Input::Command(command)) if ready => {
                 if send_command(&mut stdin, &config, command, &mut pending).is_err() {
                     failure = Some(format!("Could not write to {}", config.display_name));
                     break;
                 }
             }
-            Ok(command) => waiting.push_back(command),
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Ok(Input::Command(command)) => waiting.push_back(command),
+            Ok(Input::ServerMessage) | Err(mpsc::RecvTimeoutError::Timeout) => {}
         }
     }
     if ready {

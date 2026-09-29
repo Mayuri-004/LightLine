@@ -39,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Changed
 - **Idle Terminals Use No CPU**: An open terminal woke its background threads about 100 times a second to check for work, even with nothing happening. They now sleep until there is output, input, a resize or a stop. An idle shell went from about 100 wakeups and 47 ms of CPU every 10 seconds to none.
+- **Idle Language Servers Use No CPU**: With a Rust or Python file open, the thread talking to rust-analyzer or Pyright woke about 30 times a second to check for work. It now sleeps until the editor or the server has something for it. With a Python file open and nothing happening, LightLine went from about 40 wakeups a second to 2–5.
 - **No Terminal at Startup**: LightLine no longer starts a PowerShell session on every launch. Startup is faster, the Welcome screen shows again, and the editor keeps keyboard focus. `` Ctrl+` `` starts the first terminal when you need it.
 - **No Stray "Untitled" Tab**: Opening a folder (or closing the last file) no longer shows an empty "Untitled" tab. The editor says no file is open and how to open one; `Ctrl+N` still creates a real Untitled file.
 
