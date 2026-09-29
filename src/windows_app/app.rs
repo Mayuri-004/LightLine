@@ -264,6 +264,12 @@ pub(super) struct Tab {
     pub(super) markdown: Option<MarkdownPreview>,
     // Word wrap chosen for this tab with Alt+Z; None follows the setting.
     pub(super) word_wrap: Option<bool>,
+    // True for a tab restored from the last session whose file hasn't been
+    // read yet: it's read the first time the tab is shown (show_active_tab).
+    // `document` is then an empty placeholder with the file's path and must
+    // never be edited or saved over the real file; `views` holds the saved
+    // cursor and scroll positions.
+    pub(super) unloaded: bool,
 }
 
 #[derive(Clone)]
@@ -337,7 +343,18 @@ impl Tab {
             placeholder: false,
             markdown: None,
             word_wrap: None,
+            unloaded: false,
         }
+    }
+
+    // A tab from the last session, read when first shown (see `unloaded`).
+    pub(super) fn unloaded(path: PathBuf, views: [EditorView; 2]) -> Self {
+        let mut document = Document::new();
+        document.path = Some(path);
+        let mut tab = Self::new(document);
+        tab.views = views;
+        tab.unloaded = true;
+        tab
     }
 
     pub(super) fn new_markdown_preview(source: PathBuf) -> Self {
@@ -398,13 +415,15 @@ impl Tab {
             placeholder: false,
             markdown: None,
             word_wrap: None,
+            unloaded: false,
         }
     }
 
     // True for a generated preview (image or hex dump) whose content is not
-    // real document text and must be treated as read-only everywhere else.
+    // real document text and must be treated as read-only everywhere else,
+    // and for a tab whose file hasn't been read yet.
     pub(super) fn read_only(&self) -> bool {
-        self.image.is_some() || self.binary_preview || self.markdown.is_some()
+        self.image.is_some() || self.binary_preview || self.markdown.is_some() || self.unloaded
     }
 
     pub(super) fn is_rust(document: &Document) -> bool {
@@ -1885,6 +1904,10 @@ impl App {
     }
 
     pub(super) fn show_active_tab(&mut self, hwnd: HWND) {
+        if !self.load_active_tab(hwnd) {
+            // Its file is gone; closing it showed another tab.
+            return;
+        }
         self.clear_hover(hwnd);
         self.keep_active_tab_visible(hwnd);
         self.find_mode = false;
@@ -1934,9 +1957,13 @@ impl App {
     }
 
     pub(super) fn close_tab(&mut self, hwnd: HWND, index: usize) {
-        self.activate_tab(hwnd, index);
-        if !self.can_discard(hwnd) {
-            return;
+        // Shown first so a save prompt names the right file. A tab whose file
+        // was never read has nothing to save, and isn't read just to close.
+        if !self.tabs.get(index).is_some_and(|tab| tab.unloaded) {
+            self.activate_tab(hwnd, index);
+            if !self.can_discard(hwnd) {
+                return;
+            }
         }
         if let Some(path) = self.tabs.get(index).and_then(|t| t.document.path.clone())
             && let Some(watcher) = &self.watcher
@@ -2410,11 +2437,13 @@ impl App {
                 }
                 lightline::watcher::WatchEvent::FileChanged(path) => {
                     for (index, tab) in self.tabs.iter_mut().enumerate() {
-                        if tab
-                            .document
-                            .path
-                            .as_deref()
-                            .is_some_and(|p| Self::same_path(p, &path))
+                        // A tab not read yet reads the latest file when shown.
+                        if !tab.unloaded
+                            && tab
+                                .document
+                                .path
+                                .as_deref()
+                                .is_some_and(|p| Self::same_path(p, &path))
                         {
                             // LightLine's own save also fires this event.
                             // Reloading then would wipe the undo history and
@@ -2717,8 +2746,10 @@ impl App {
     }
 
     pub(super) fn save(&mut self, hwnd: HWND, save_as: bool) -> bool {
-        // No file is open; Ctrl+S has nothing to write.
-        if self.tab().is_placeholder() {
+        // No file is open; Ctrl+S has nothing to write. A tab whose file
+        // hasn't been read has only an empty stand-in, which must never be
+        // written over the file (it's read whenever the tab is shown).
+        if self.tab().is_placeholder() || self.tab().unloaded {
             return false;
         }
         if self.tab().markdown.is_some() {
@@ -2813,6 +2844,68 @@ impl App {
         }
     }
 
+    // Reads `path` into a new tab: an image preview, the text, or a hex dump
+    // of a file that is neither.
+    fn load_tab(path: &Path) -> io::Result<Tab> {
+        if image_view::is_image_path(path) {
+            return image_view::load_image(path)
+                .map(|image| Tab::new_image(path.to_path_buf(), image))
+                .ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidData, "Could not decode this image")
+                });
+        }
+        match Document::open(path.to_path_buf()) {
+            Ok(document) => Ok(Tab::new(document)),
+            // Not valid UTF-8 text and not a decodable image: fall back to
+            // a read-only hex dump instead of refusing to open the file.
+            Err(error) if error.kind() == io::ErrorKind::InvalidData => {
+                binary_view::read_preview(path).map(|(bytes, total)| {
+                    Tab::new_binary_preview(path.to_path_buf(), &bytes, total)
+                })
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    // Reads the file of a tab restored from the last session the first time
+    // it's shown, keeping its saved cursor and scroll positions. False when
+    // the file couldn't be read: the tab is then closed and another shown.
+    fn load_active_tab(&mut self, hwnd: HWND) -> bool {
+        let index = self.active;
+        let Some(tab) = self.tabs.get(index).filter(|tab| tab.unloaded) else {
+            return true;
+        };
+        let path = tab.document.path.clone().unwrap_or_default();
+        let saved = tab.views.clone();
+        match Self::load_tab(&path) {
+            Ok(mut loaded) => {
+                let doc = &loaded.document;
+                let views = saved.map(|view| EditorView {
+                    cursor: doc.clamp(view.cursor),
+                    selection_anchor: view.selection_anchor.map(|anchor| doc.clamp(anchor)),
+                    first_line: view.first_line.min(doc.line_count().saturating_sub(1)),
+                    first_row: 0,
+                });
+                loaded.views = views;
+                self.tabs[index] = loaded;
+                if let Some(watcher) = &self.watcher {
+                    watcher.watch_file(path);
+                }
+                true
+            }
+            Err(error) => {
+                // Deleted or unreadable since the session was saved. Still
+                // unloaded, so closing it doesn't show it first.
+                self.close_tab(hwnd, index);
+                self.status = format!(
+                    "Could not open {}: {error}",
+                    path.file_name().unwrap_or_default().to_string_lossy()
+                );
+                false
+            }
+        }
+    }
+
     pub(super) fn open(&mut self, hwnd: HWND, path: Option<PathBuf>) {
         let Some(path) = path.or_else(|| self.dialog(hwnd, false)) else {
             return;
@@ -2831,25 +2924,7 @@ impl App {
             );
             return;
         }
-        let new_tab = if image_view::is_image_path(&path) {
-            image_view::load_image(&path)
-                .map(|image| Tab::new_image(path.clone(), image))
-                .ok_or_else(|| {
-                    io::Error::new(io::ErrorKind::InvalidData, "Could not decode this image")
-                })
-        } else {
-            match Document::open(path.clone()) {
-                Ok(document) => Ok(Tab::new(document)),
-                // Not valid UTF-8 text and not a decodable image: fall back to
-                // a read-only hex dump instead of refusing to open the file.
-                Err(error) if error.kind() == io::ErrorKind::InvalidData => {
-                    binary_view::read_preview(&path)
-                        .map(|(bytes, total)| Tab::new_binary_preview(path.clone(), &bytes, total))
-                }
-                Err(error) => Err(error),
-            }
-        };
-        match new_tab {
+        match Self::load_tab(&path) {
             Ok(tab) => {
                 let preview = tab.binary_preview;
                 self.terminal_focus = false;

@@ -35,9 +35,12 @@ impl App {
         workflow::save_session(&self.capture_session());
     }
 
-    // Reopen the last session: restore the workspace, then every file that
-    // still exists, and finally each tab's cursor, selection, and scroll
-    // position before activating the previously focused tab.
+    // Reopen the last session: the workspace, and a tab for every file that
+    // still exists, in the same order and with each tab's cursor, selection
+    // and scroll position. Only the file that was showing is read now; the
+    // others are read when first shown (Tab::unloaded). Reading them all
+    // first made startup wait for every tab: with 20 tabs the window took
+    // twice as long to respond.
     pub(super) fn restore_session(&mut self, hwnd: HWND) {
         let session = workflow::load_session();
         if session.root.is_none() && session.tabs.is_empty() {
@@ -47,41 +50,58 @@ impl App {
         if let Some(root) = session.root.clone() {
             self.set_workspace(hwnd, root);
         }
-        for saved in &session.tabs {
+        let view = |saved: &workflow::SessionView| EditorView {
+            cursor: Pos {
+                line: saved.cursor.0,
+                byte: saved.cursor.1,
+            },
+            selection_anchor: saved.anchor.map(|(line, byte)| Pos { line, byte }),
+            first_line: saved.first_line,
+            first_row: 0,
+        };
+        let shown = session.active.min(session.tabs.len().saturating_sub(1));
+        let mut active = None;
+        for (position, saved) in session.tabs.iter().enumerate() {
             if !saved.path.is_file() {
                 continue;
             }
-            self.open(hwnd, Some(saved.path.clone()));
-            // `open` activates the tab it just opened (or focuses the existing
-            // one), so the current active index is the tab to position.
-            let index = self.active;
-            for (pane, view) in saved.views.iter().enumerate().take(2) {
-                let (cursor, selection_anchor, first_line) = {
-                    let doc = &self.tabs[index].document;
-                    (
-                        doc.clamp(Pos {
-                            line: view.cursor.0,
-                            byte: view.cursor.1,
-                        }),
-                        view.anchor
-                            .map(|(line, byte)| doc.clamp(Pos { line, byte })),
-                        view.first_line.min(doc.line_count().saturating_sub(1)),
-                    )
-                };
-                self.tabs[index].views[pane] = EditorView {
-                    cursor,
-                    selection_anchor,
-                    first_line,
-                    first_row: 0,
-                };
+            if position == shown {
+                self.open(hwnd, Some(saved.path.clone()));
+                // `open` activates the tab it just opened, so the active
+                // index is the tab to position.
+                let index = self.active;
+                let doc = &self.tabs[index].document;
+                let views = saved.views.clone().map(|saved| {
+                    let restored = view(&saved);
+                    EditorView {
+                        cursor: doc.clamp(restored.cursor),
+                        selection_anchor: restored.selection_anchor.map(|pos| doc.clamp(pos)),
+                        first_line: restored.first_line.min(doc.line_count().saturating_sub(1)),
+                        first_row: 0,
+                    }
+                });
+                self.tabs[index].views = views;
+                active = Some(index);
+            } else {
+                let tab = Tab::unloaded(
+                    saved.path.clone(),
+                    saved.views.clone().map(|saved| view(&saved)),
+                );
+                // Until a file opens, the editor's one tab is an empty stand-in.
+                if self.tabs.len() == 1 && self.tabs[0].is_placeholder() {
+                    self.tabs[0] = tab;
+                } else {
+                    self.tabs.push(tab);
+                }
             }
         }
-        if self.tabs.is_empty() {
+        if self.tabs.iter().all(Tab::is_placeholder) {
             self.restoring = false;
             return;
         }
-        let active = session.active.min(self.tabs.len() - 1);
-        self.activate_tab(hwnd, active);
+        // Normally the file that was showing; if it's gone, the first tab.
+        self.welcome = false;
+        self.activate_tab(hwnd, active.unwrap_or(0));
         self.keep_cursor_visible(hwnd);
         self.status = "Restored previous session".into();
         self.restoring = false;
