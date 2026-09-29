@@ -150,7 +150,12 @@ pub(super) fn load_svg(bytes: &[u8], density: f32) -> Option<ImageAsset> {
         ((backdrop >> 16) & 0xff) as u16,
     ];
     let mut bgrx = vec![0u8; (width * height * 4) as usize];
-    for (dst, src) in bgrx.chunks_exact_mut(4).zip(pixmap.data().chunks_exact(4)) {
+    for (dst, src) in bgrx
+        .as_chunks_mut::<4>()
+        .0
+        .iter_mut()
+        .zip(pixmap.data().as_chunks::<4>().0)
+    {
         let uncovered = 255 - u16::from(src[3]);
         dst[0] = (u16::from(src[2]) + background[0] * uncovered / 255).min(255) as u8;
         dst[1] = (u16::from(src[1]) + background[1] * uncovered / 255).min(255) as u8;
