@@ -48,7 +48,7 @@ The Windows prototype is now split by responsibility. `src/main.rs` is only the 
 | Area | Initial direction | Decision status |
 | --- | --- | --- |
 | Primary language | Rust for the core, editor, UI, services, and performance-critical code | Stable principle |
-| Target platform | Windows first; other platforms later | Stable near-term scope |
+| Target platform | Windows first; macOS next, through a portable renderer (see [macOS support](#macos-support)) | Planned |
 | UI | Prototype GPUI first, then compare with other native Rust approaches | Candidate, not locked |
 | Rendering | Native/GPU-assisted, with a custom editor viewport if useful | Benchmark before committing |
 | Text buffer | Compare gap buffer, piece table, rope, and rope-like structures | Open |
@@ -154,6 +154,36 @@ The following are outside the v0.1 target: AI, plugins, debugger, broad language
 ### Current implementation versus v0.1 target
 
 The repository currently contains a Windows Rust editor with multiple tabs, vertical split panes, UTF-8 open/save, editing, undo/redo, selection, clipboard commands, in-file and project search, Rust syntax coloring, lazy workspace browsing, Quick Open, streamed Rust test output, and read-only Git review. The two panes can show the same document with separate cursor, selection, and scroll state; document text and undo history are shared. Rust files up to 128 KiB use a background Tree-sitter worker with incremental tree edits and revision-checked results. Larger Rust files use a lexical fallback with lazy line-start state and bounded scanning. Language intelligence now starts rust-analyzer and Pyright lazily for opened Rust and Python files, keeps diagnostics and hover off the UI thread, and continues editing if a server is slow or exits. The repository also includes document, syntax, and LSP tests and benchmarks. GPUI, an interactive terminal, and a debugger remain future work.
+
+## macOS support
+
+LightLine runs only on Windows because its UI layer, `src/windows_app/`, is written directly against Win32: window creation, GDI drawing, and mouse and keyboard messages. The library underneath is mostly portable already: the text document, Tree-sitter syntax, LSP client, Git, debugger protocol, formatters and Markdown. Only a few library pieces are Windows-specific: the ConPTY terminal, the clipboard, and `%APPDATA%` and `\\?\` paths.
+
+**Approach: keep painting everything ourselves, on a cross-platform base.** LightLine already draws every pixel itself, so the port swaps the platform layer under that painting rather than adopting a widget framework:
+
+| Today (Windows only) | Portable replacement |
+| --- | --- |
+| Win32 window and message loop | `winit` |
+| GDI drawing into a backbuffer | `tiny-skia` (already used for SVG icons), presented with `softbuffer` |
+| GDI text output and measurement | `cosmic-text` for shaping, layout and glyphs |
+| ConPTY terminal | `portable-pty` (ConPTY on Windows, a Unix PTY on macOS) |
+| Win32 clipboard | a cross-platform clipboard crate |
+| `%APPDATA%`, `\\?\` paths | a per-platform config folder (`~/Library/Application Support` on macOS) |
+
+This keeps one codebase, the current look and the same performance model (redraw only what changed), and brings Linux nearly for free. It replaces the GPUI prototype listed under [Technology direction](#technology-direction) as the path off Windows-only.
+
+**Steps, each one shippable on its own:**
+
+1. **A drawing interface in front of GDI.** Route every fill, line, text and image call through a small `Canvas` trait implemented with GDI. There is no visible change on Windows, and every paint path stops depending on Win32 directly.
+2. **Platform services behind interfaces.** Do the same for the window and input events, clipboard, file dialogs, cursors, timers and the config folder.
+3. **The portable backend, on Windows first.** Implement `Canvas` with `tiny-skia` and `cosmic-text`, and the window with `winit`. Compare startup, memory, typing latency and scrolling against GDI on the same machine; switch only when it matches or beats GDI.
+4. **The terminal on `portable-pty`**, with zsh and bash as the macOS shells.
+5. **The macOS build.** Menus and shortcuts (`Cmd` for `Ctrl`), Retina scaling, and a `.app` bundle. Add a `macos-latest` job to CI and a macOS release asset.
+6. **Signing and notarization.** An Apple Developer account ($99 a year) is required; without it, macOS blocks the app more strictly than SmartScreen does.
+
+**Needs:** a Mac to develop and test the UI on (GitHub's macOS runners can build and test, but not judge look and feel), and the benchmarks in [Performance discipline](#performance-discipline) recorded before and after step 3.
+
+Other options considered: a separate native AppKit frontend (the most native feel, but two UIs to maintain), a Rust GUI framework such as GPUI, `iced`, `egui` or Slint (close to a full UI rewrite), and Tauri or Electron (fastest to ship, but it gives up the small, fast footprint that defines LightLine).
 
 ## Decision rules
 

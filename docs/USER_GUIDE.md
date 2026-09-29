@@ -1,0 +1,180 @@
+# LightLine User Guide
+
+Everything the [README](../README.md) leaves out: every shortcut, every setting, and how to set up languages, the debugger, the AI Assistant and extensions.
+
+- [Keyboard shortcuts](#keyboard-shortcuts)
+- [Settings](#settings)
+- [Languages, formatting and debugging](#languages-formatting-and-debugging)
+- [AI Assistant](#ai-assistant)
+- [Extensions and themes](#extensions-and-themes)
+- [Verifying a download](#verifying-a-download)
+
+---
+
+## Keyboard shortcuts
+
+### Files and workspace
+
+| Shortcut | Action |
+| --- | --- |
+| `Ctrl+P` | Quick Open files; type `>` for the Command Palette |
+| `Ctrl+N` / `Ctrl+W` | New tab / close the active tab |
+| `Ctrl+O` / `Ctrl+S` | Open a file / save the active file |
+| `Ctrl+Shift+O` | Open a folder as the workspace |
+| `Ctrl+Shift+W` | Close the workspace and return to the Welcome screen (also `>Close Workspace`) |
+| `F2` / `Delete` | In the Explorer: rename / delete the selected file or folder |
+
+### Editing and navigation
+
+| Shortcut | Action |
+| --- | --- |
+| `Ctrl+F` | Find in the current file. `Enter` / `Shift+Enter` (or `F3` / `Shift+F3`) go to the next / previous match; `Esc` closes |
+| `Ctrl+H` | Find and replace. `Tab` switches fields, `Enter` replaces the current match, `Alt+Enter` replaces all (one `Ctrl+Z` undoes it) |
+| `Ctrl+Shift+F` | Search all files in the workspace; `Enter` moves to the results |
+| `Ctrl+Space` | Show completions |
+| `F1` | Show documentation for the symbol at the cursor |
+| `F12` / `Shift+F12` | Go to definition / find all references |
+| `Shift+Alt+F` | Format the document |
+| `Alt+Z` | Toggle word wrap for this file (on by default for Markdown) |
+| `Ctrl+Shift+V` | Preview a Markdown file (`>Markdown: Open Preview to the Side` shows it beside the file) |
+| Gutter chevron | Fold or unfold a block (`⌄` / `›`) |
+
+### Layout
+
+| Shortcut | Action |
+| --- | --- |
+| `Ctrl+B` | Show or hide the side panel (also the ☰ at the top of the left rail) |
+| `Ctrl+\` | Split the editor / close the split |
+| `Ctrl+1` / `Ctrl+2` | Focus the left / right pane |
+| `` Ctrl+` `` / `` Ctrl+Shift+` `` | Show or hide the terminal / open a new terminal tab |
+| `Ctrl+Shift+G` | Source Control |
+| `Ctrl+Shift+D` | Run & Debug |
+| `Ctrl+Shift+X` | Extensions |
+| `Ctrl+,` | Settings |
+| `Ctrl++` / `Ctrl+-` / `Ctrl+0` | Zoom in / out / reset |
+
+### Run and debug
+
+| Shortcut | Action |
+| --- | --- |
+| `Ctrl+Shift+R` | Run the active Python, C/C++ or Rust file |
+| `Ctrl+Shift+B` | Run Rust tests (`cargo test`) |
+| `F5` / `Shift+F5` | Start or continue debugging / stop |
+| `F10` | Step over |
+| `F11` / `Shift+F11` | Step into / step out |
+| `F9` or a click in the gutter | Toggle a breakpoint |
+
+In the search results and the Source Control list, `↑` / `↓` move, `Enter` opens, and `Space` stages or unstages. While your program runs in the Output pane, it receives what you type, including `Enter`.
+
+---
+
+## Settings
+
+Click the **gear** at the bottom of the left rail, or press **`Ctrl+,`**, to open **Settings**. Changes apply at once and are saved to `%APPDATA%\LightLine\settings.json`.
+
+To edit the file directly, click **Open settings.json** at the bottom of the panel or run **`>Open Settings (JSON)`**. Anything you leave out keeps its default:
+
+```json
+{
+  "fontFamily": "Consolas",
+  "fontSize": 14,
+  "tabSize": 4,
+  "insertSpaces": true,
+  "wordWrap": false,
+  "autoClosePairs": true,
+  "autoIndent": true,
+  "formatOnSave": false,
+  "bracketMatching": true,
+  "indentGuides": true,
+  "markdownLoadRemoteImages": false,
+  "colorTheme": "Dracula",
+  "aiEndpoint": "http://localhost:11434",
+  "aiModel": "qwen2.5-coder:7b",
+  "colors": {
+    "editorBg": "#141820",
+    "text": "#d8dee9",
+    "selectBg": "#264f78",
+    "keyword": "#4a90e2",
+    "string": "#a3be8c",
+    "comment": "#6b7280"
+  }
+}
+```
+
+| Setting | What it does |
+| --- | --- |
+| `fontFamily`, `fontSize` | The code font (if installed) and its size, 8–48 |
+| `tabSize`, `insertSpaces`, `autoIndent` | Indentation: tab width, spaces or tabs, and indenting new lines |
+| `wordWrap` | Wrap long lines in every file (Markdown wraps by default) |
+| `autoClosePairs` | Type closing brackets and quotes for you |
+| `bracketMatching`, `indentGuides` | Highlight matching brackets; draw indentation guides |
+| `formatOnSave` | Format the file before each save |
+| `markdownLoadRemoteImages` | Load web images in Markdown previews without asking |
+| `colorTheme` | An installed color theme, such as `"Catppuccin Mocha"`; leave it out for LightLine's own. **Preferences: Color Theme** sets it for you |
+| `aiEndpoint`, `aiModel` | Where the AI Assistant connects, and which model it uses |
+| `colors` | Override individual theme colors, on top of the color theme |
+
+`minimap`, `smoothScrolling` and `parseLimitKb` are accepted but don't do anything yet.
+
+---
+
+## Languages, formatting and debugging
+
+Colors, folding, search and running files work with nothing extra installed. These add more:
+
+- **Rust**: for errors, completions and go-to-definition, run `rustup component add rust-analyzer rust-src`.
+- **Python**: install Node.js once (for example `winget install OpenJS.NodeJS.LTS`). The first time you open a Python file, LightLine downloads Pyright into `%APPDATA%\LightLine\pyright`.
+- **Debugging Rust**: needs `lldb-dap` on your `PATH`; it comes with LLVM or the Visual Studio C++ Build Tools.
+- **Debugging Python**: needs `debugpy` in the Python that `Ctrl+Shift+R` uses (the selected one, a nearby `.venv`, or `python` on `PATH`). Run **Python: Install debugpy** from the Command Palette, or `python -m pip install debugpy`. Your program runs in the Output pane, so `input()` works while debugging.
+- **C and C++**: files can be run, not yet debugged.
+- **Formatting**: JSON and TOML format with nothing installed, keeping comments and key order. For JavaScript, TypeScript, CSS, HTML, Markdown and YAML, install Prettier (`npm install -g prettier`) or have `npx` available. LightLine only looks for it; it never installs it.
+
+---
+
+## AI Assistant
+
+The AI Assistant (the sparkle in the left rail) chats about your code with a model running **on your own PC** through [Ollama](https://ollama.com): free, private, and it works offline. It stays off until you connect it, and until then nothing runs or is sent anywhere.
+
+1. Install Ollama and download a model, for example `ollama pull qwen2.5-coder:7b` (on smaller PCs, `qwen2.5-coder:1.5b`).
+2. Open the AI Assistant and click **Connect to Ollama**. LightLine picks a model made for code.
+3. Type a question and press **Enter** (**Shift+Enter** for a new line). Selected code is sent along, and the panel shows which lines before you send.
+
+Answers appear as they're written. **Esc** stops one, **+** starts a new chat, and the model name at the top switches models or turns the assistant off.
+
+Each code block in an answer has three buttons:
+
+- **Insert** adds the code at the cursor.
+- **Replace** swaps it in for the code you asked about, if that code hasn't changed since.
+- **Copy** copies it.
+
+Inserted code is indented to fit where it lands, and one **Ctrl+Z** undoes it.
+
+**From the editor:** right-click selected code for **Explain**, **Fix**, **Write Tests** or **Add Comments**. Right-click a red or yellow underline for **Explain This Error** or **Fix This Error**. These are also in the Command Palette under `>AI:`.
+
+- **Other servers**: set `aiEndpoint` to any OpenAI-compatible server, such as LM Studio (`http://localhost:1234`).
+- **Cloud models**: Ollama models whose names end in `cloud` run on ollama.com, not your PC. LightLine never picks one for you, and warns you if you do.
+
+---
+
+## Extensions and themes
+
+The Extensions panel (`Ctrl+Shift+X`) installs extensions from the [Zed extension registry](https://github.com/zed-industries/extensions) into `%APPDATA%\LightLine\extensions`. Two kinds work today. Neither runs code inside LightLine.
+
+- **Color themes** recolor all of LightLine, dark or light, including the terminal. Installing one, such as **Dracula**, switches to it at once and it's remembered. Themes with several variants (Catppuccin Latte, Frappé, Macchiato, Mocha) offer each in **Preferences: Color Theme**.
+- **Icon themes** change file and folder icons; **Material Icon Theme** is the popular one. Without one, LightLine uses its built-in icons.
+
+Other kinds of extensions, such as language servers, say they aren't supported yet rather than half-installing.
+
+---
+
+## Verifying a download
+
+Each release includes `SHA256SUMS.txt`. In PowerShell, in the folder you downloaded to, run:
+
+```powershell
+Get-FileHash .\lightline.exe -Algorithm SHA256
+```
+
+The result must match the `lightline.exe` line in `SHA256SUMS.txt` exactly. For the ZIP, run it with the ZIP's name instead. If they differ, delete the download.
+
+LightLine isn't code-signed yet, so the first time you run it, Windows SmartScreen may say **"Windows protected your PC"**. If the checksum matches, click **More info**, check that the app is `lightline.exe`, and click **Run anyway**. Don't turn SmartScreen off, and don't continue if Windows reports malware rather than an unrecognized app.
