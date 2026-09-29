@@ -229,9 +229,9 @@ impl App {
         }
     }
 
-    /// Whether a keystroke in the editor changes nothing outside the editor
-    /// and the status bar. An open popup, hover card or menu can reach past
-    /// them, and the assistant panel describes the selection.
+    /// Whether a keystroke or click in the editor changes nothing outside the
+    /// editor and the status bar. An open popup, hover card or menu can reach
+    /// past them, and the assistant panel describes the selection.
     pub(in crate::windows_app) fn keystroke_stays_in_editor(&self) -> bool {
         !self.welcome
             && self.hover_card.is_none()
@@ -239,6 +239,129 @@ impl App {
             && self.editor_context.is_none()
             && self.more_menu.is_none()
             && !self.ai_assistant_visible
+    }
+
+    /// The focused pane's caret, selection and bracket highlight, and what
+    /// else it shows, taken before a click, drag or key acts; see
+    /// `caret_changes`.
+    pub(in crate::windows_app) fn caret_frame(&self, hwnd: HWND) -> CaretFrame {
+        let pane = self.focused_pane;
+        let tab = &self.tabs[self.tab_for_pane(pane)];
+        let doc = &tab.document;
+        let view = self.view_for_pane(pane);
+        let (start, end) = match view.selection_anchor {
+            Some(anchor) if anchor < view.cursor => (anchor, view.cursor),
+            Some(anchor) if anchor > view.cursor => (view.cursor, anchor),
+            _ => (view.cursor, view.cursor),
+        };
+        CaretFrame {
+            scene: CaretScene {
+                pane,
+                tab: self.tab_for_pane(pane),
+                split: self.split_visible,
+                text: tab.image.is_none() && tab.markdown.is_none() && !tab.is_placeholder(),
+                top: self.view_top(hwnd, pane),
+                serial: doc.change_serial(),
+                lines: doc.line_count(),
+                shown_lines: doc.visible_line_count(),
+                breakpoints: doc.breakpoints().len(),
+                find: self.find_mode,
+                keyboard: [
+                    self.focused,
+                    self.panel_focus,
+                    self.terminal_focus,
+                    self.search_input,
+                    self.commit_focus,
+                    self.extensions_search_active,
+                ],
+                stays: self.keystroke_stays_in_editor(),
+            },
+            cursor: view.cursor,
+            start,
+            end,
+            brackets: self.bracket_pair(pane),
+        }
+    }
+
+    /// What to redraw after a click, drag or key that began at `before`. When
+    /// only the caret, the selection or the bracket highlight moved, that's
+    /// the rows of the lines they left or reached, and the status bar; each
+    /// mouse move of a drag redrew the whole editor. Otherwise the editor and
+    /// the status bar.
+    pub(in crate::windows_app) fn caret_changes(
+        &self,
+        hwnd: HWND,
+        before: &CaretFrame,
+    ) -> Vec<RECT> {
+        let after = self.caret_frame(hwnd);
+        if after.scene != before.scene || !after.scene.stays || !after.scene.text {
+            return vec![self.editor_area(hwnd, true), self.status_area(hwnd)];
+        }
+        let mut lines = vec![
+            (before.cursor.line, before.cursor.line),
+            (after.cursor.line, after.cursor.line),
+        ];
+        // A selection edge that moved changes the lines between its places.
+        for (old, new) in [(before.start, after.start), (before.end, after.end)] {
+            if old != new {
+                lines.push((old.line.min(new.line), old.line.max(new.line)));
+            }
+        }
+        for (bracket, matching) in before.brackets.iter().chain(&after.brackets) {
+            lines.push((bracket.line, bracket.line));
+            if let Some(other) = matching {
+                lines.push((other.line, other.line));
+            }
+        }
+        let mut areas = self.rows_showing(hwnd, self.focused_pane, &lines);
+        areas.push(self.status_area(hwnd));
+        areas
+    }
+
+    /// The rows of `pane` showing any of `lines` (inclusive ranges), one
+    /// rectangle per run of adjacent rows, across the gutter and the text.
+    fn rows_showing(&self, hwnd: HWND, pane: usize, lines: &[(usize, usize)]) -> Vec<RECT> {
+        let doc = &self.tabs[self.tab_for_pane(pane)].document;
+        // A line inside a fold shows on the fold's row.
+        let lines: Vec<(usize, usize)> = lines
+            .iter()
+            .map(|&(first, last)| (doc.visible_line_for(first), last))
+            .collect();
+        let columns = self.wrap_columns(hwnd, pane);
+        let (left, right) = (self.pane_left(hwnd, pane), self.pane_right(hwnd, pane));
+        let bottom = self.editor_area(hwnd, false).bottom;
+        let (mut line, mut first_row) = self.view_top(hwnd, pane);
+        let mut top = self.editor_top();
+        let mut areas: Vec<RECT> = Vec::new();
+        while top < bottom {
+            let rows =
+                super::super::wrap::layout_line(doc.line(line), columns, self.settings.tab_size)
+                    .count()
+                    - first_row;
+            let rows_bottom = (top + rows as i32 * self.line_height).min(bottom);
+            if lines
+                .iter()
+                .any(|&(first, last)| (first..=last).contains(&line))
+            {
+                match areas.last_mut() {
+                    Some(area) if area.bottom == top => area.bottom = rows_bottom,
+                    _ => areas.push(RECT {
+                        left,
+                        top,
+                        right,
+                        bottom: rows_bottom,
+                    }),
+                }
+            }
+            top = rows_bottom;
+            let next = doc.next_visible_line(line);
+            if next == line {
+                break;
+            }
+            line = next;
+            first_row = 0;
+        }
+        areas
     }
 
     /// Runs `update`, which asks for the whole window to be redrawn, and
@@ -823,6 +946,35 @@ impl App {
             DeleteObject(pen_fold);
         }
     }
+}
+
+/// See `App::caret_frame`.
+pub(in crate::windows_app) struct CaretFrame {
+    scene: CaretScene,
+    cursor: Pos,
+    start: Pos,
+    end: Pos,
+    brackets: Option<(Pos, Option<Pos>)>,
+}
+
+/// Everything besides the caret, the selection and the bracket highlight
+/// that decides what the focused pane shows: the file, where it's scrolled
+/// to, its text and folds, and what has the keyboard. When any of it
+/// changes, the whole editor is redrawn.
+#[derive(PartialEq)]
+struct CaretScene {
+    pane: usize,
+    tab: usize,
+    split: bool,
+    text: bool,
+    top: (usize, usize),
+    serial: u64,
+    lines: usize,
+    shown_lines: usize,
+    breakpoints: usize,
+    find: bool,
+    keyboard: [bool; 6],
+    stays: bool,
 }
 
 #[derive(Clone, Copy)]

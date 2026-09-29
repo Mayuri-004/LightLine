@@ -32,7 +32,7 @@ use ai_chat::{AI_EVENT_MESSAGE, AiChat, AiTask};
 use language::LSP_EVENT_MESSAGE;
 use terminal::TERMINAL_EVENT_MESSAGE;
 mod render;
-use render::WelcomeAction;
+use render::{CaretFrame, WelcomeAction};
 mod window;
 pub use window::run;
 

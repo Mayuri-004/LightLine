@@ -146,8 +146,24 @@ impl App {
             'lines: while screen_row < visible {
                 let source = doc.line(index);
                 let rows = super::super::wrap::layout_line(source, columns, self.settings.tab_size);
+                // Lines and rows outside the area being redrawn are skipped:
+                // the backbuffer still shows them. Dragging a selection
+                // redraws only the rows it changes.
+                let line_top = self.editor_top() + screen_row as i32 * self.line_height;
+                let line_shows = RectVisible(
+                    hdc,
+                    &RECT {
+                        left,
+                        top: line_top,
+                        right,
+                        bottom: line_top
+                            + (rows.count() - first_row).max(1) as i32 * self.line_height,
+                    },
+                ) != 0;
                 let spans = match &tab.syntax {
-                    Some(syntax) if source.len() <= 16_384 => syntax.spans(doc, index),
+                    Some(syntax) if line_shows && source.len() <= 16_384 => {
+                        syntax.spans(doc, index)
+                    }
                     _ => Vec::new(),
                 };
                 // The selected byte range of this line, and whether the
@@ -176,6 +192,19 @@ impl App {
                         break 'lines;
                     }
                     screen_row += 1;
+                    if !line_shows
+                        || RectVisible(
+                            hdc,
+                            &RECT {
+                                left,
+                                top: y,
+                                right,
+                                bottom: y + self.line_height,
+                            },
+                        ) == 0
+                    {
+                        continue;
+                    }
                     let row_start = rows.start(row);
                     let row_end = rows.end(row, source.len());
                     let last_row = rows.is_last(row);
@@ -514,160 +543,63 @@ impl App {
             DeleteObject(git_mod_brush);
             DeleteObject(git_del_brush);
             // Bracket matching: highlight the matching bracket pair.
-            if self.settings.bracket_matching && pane == self.focused_pane && !self.terminal_focus {
+            if let Some((bracket, matching)) = self.bracket_pair(pane) {
                 let match_brush = CreateSolidBrush(ui(60, 80, 120));
-                let bracket_at = |byte: usize, line_idx: usize| -> Option<(char, usize)> {
-                    let text = doc.line(line_idx);
-                    if byte >= text.len() || !text.is_char_boundary(byte) {
-                        return None;
+                // Draw the highlight rectangles for both brackets.
+                let draw_bracket_bg = |line_idx: usize, b: usize| {
+                    if doc.is_line_hidden(line_idx) {
+                        return;
                     }
-                    let ch = text[byte..].chars().next()?;
-                    if matches!(ch, '(' | ')' | '[' | ']' | '{' | '}') {
-                        Some((ch, byte))
+                    let at = Pos {
+                        line: line_idx,
+                        byte: b,
+                    };
+                    let Some((row, row_start, indent)) = self.locate(hwnd, pane, at, visible)
+                    else {
+                        return;
+                    };
+                    let y = self.editor_top() + row as i32 * self.line_height;
+                    if y >= bottom {
+                        return;
+                    }
+                    let text = doc.line(line_idx);
+                    let x = code_left
+                        + indent
+                        + self.text_width(hdc, safe_slice_range(text, row_start, b));
+                    let rest = if b < text.len() && text.is_char_boundary(b) {
+                        &text[b..]
                     } else {
-                        None
+                        ""
+                    };
+                    let ch_text = rest
+                        .chars()
+                        .next()
+                        .map(|c| &rest[..c.len_utf8()])
+                        .unwrap_or(" ");
+                    let w = self.text_width(hdc, ch_text);
+                    if x < right {
+                        FillRect(
+                            hdc,
+                            &RECT {
+                                left: x,
+                                top: y,
+                                right: (x + w).min(right),
+                                bottom: (y + self.line_height).min(bottom),
+                            },
+                            match_brush,
+                        );
+                        // The fill above paints over the bracket glyph
+                        // that the earlier syntax-color pass already
+                        // drew, leaving a blank highlighted box instead
+                        // of a highlighted character; redraw it on top.
+                        SetTextColor(hdc, self.theme.text);
+                        let chars: Vec<u16> = ch_text.encode_utf16().collect();
+                        TextOutW(hdc, x, y, chars.as_ptr(), chars.len() as i32);
                     }
                 };
-                let cursor_line = view.cursor.line;
-                let cursor_byte = view.cursor.byte;
-                // Check the character at the cursor, then the one before it.
-                let bracket = bracket_at(cursor_byte, cursor_line).or_else(|| {
-                    if cursor_byte > 0 {
-                        let text = doc.line(cursor_line);
-                        let prev_byte = safe_slice_prefix(text, cursor_byte)
-                            .char_indices()
-                            .last()
-                            .map(|(i, _)| i)?;
-                        bracket_at(prev_byte, cursor_line)
-                    } else {
-                        None
-                    }
-                });
-                if let Some((ch, byte)) = bracket {
-                    let (open, close, forward) = match ch {
-                        '(' => ('(', ')', true),
-                        ')' => ('(', ')', false),
-                        '[' => ('[', ']', true),
-                        ']' => ('[', ']', false),
-                        '{' => ('{', '}', true),
-                        '}' => ('{', '}', false),
-                        _ => ('(', ')', true),
-                    };
-                    // Scan for the matching bracket, tracking nesting depth.
-                    let mut depth: i32 = 0;
-                    let mut match_pos: Option<(usize, usize)> = None;
-                    if forward {
-                        let mut scan_line = cursor_line;
-                        let mut scan_start = byte;
-                        'outer_fwd: while scan_line < doc.line_count()
-                            && scan_line < cursor_line + 500
-                        {
-                            let text = doc.line(scan_line);
-                            let scan_text =
-                                if scan_start < text.len() && text.is_char_boundary(scan_start) {
-                                    &text[scan_start..]
-                                } else {
-                                    ""
-                                };
-                            for (i, c) in scan_text.char_indices() {
-                                let abs = scan_start + i;
-                                if c == open {
-                                    depth += 1;
-                                }
-                                if c == close {
-                                    depth -= 1;
-                                }
-                                if depth == 0 {
-                                    match_pos = Some((scan_line, abs));
-                                    break 'outer_fwd;
-                                }
-                            }
-                            scan_line += 1;
-                            scan_start = 0;
-                        }
-                    } else {
-                        let mut scan_line = cursor_line;
-                        let mut first = true;
-                        'outer_bwd: loop {
-                            let text = doc.line(scan_line);
-                            let end = if first { byte } else { text.len() };
-                            first = false;
-                            let bwd_text = safe_slice_prefix(text, end);
-                            let indices: Vec<(usize, char)> = bwd_text.char_indices().collect();
-                            for &(i, c) in indices.iter().rev() {
-                                if c == close {
-                                    depth += 1;
-                                }
-                                if c == open {
-                                    depth -= 1;
-                                }
-                                if depth == 0 {
-                                    match_pos = Some((scan_line, i));
-                                    break 'outer_bwd;
-                                }
-                            }
-                            if scan_line == 0 || cursor_line - scan_line > 500 {
-                                break;
-                            }
-                            scan_line -= 1;
-                        }
-                    }
-                    // Draw the highlight rectangles for both brackets.
-                    let draw_bracket_bg = |line_idx: usize, b: usize| {
-                        if doc.is_line_hidden(line_idx) {
-                            return;
-                        }
-                        let at = Pos {
-                            line: line_idx,
-                            byte: b,
-                        };
-                        let Some((row, row_start, indent)) = self.locate(hwnd, pane, at, visible)
-                        else {
-                            return;
-                        };
-                        let y = self.editor_top() + row as i32 * self.line_height;
-                        if y >= bottom {
-                            return;
-                        }
-                        let text = doc.line(line_idx);
-                        let x = code_left
-                            + indent
-                            + self.text_width(hdc, safe_slice_range(text, row_start, b));
-                        let rest = if b < text.len() && text.is_char_boundary(b) {
-                            &text[b..]
-                        } else {
-                            ""
-                        };
-                        let ch_text = rest
-                            .chars()
-                            .next()
-                            .map(|c| &rest[..c.len_utf8()])
-                            .unwrap_or(" ");
-                        let w = self.text_width(hdc, ch_text);
-                        if x < right {
-                            FillRect(
-                                hdc,
-                                &RECT {
-                                    left: x,
-                                    top: y,
-                                    right: (x + w).min(right),
-                                    bottom: (y + self.line_height).min(bottom),
-                                },
-                                match_brush,
-                            );
-                            // The fill above paints over the bracket glyph
-                            // that the earlier syntax-color pass already
-                            // drew, leaving a blank highlighted box instead
-                            // of a highlighted character; redraw it on top.
-                            SetTextColor(hdc, self.theme.text);
-                            let chars: Vec<u16> = ch_text.encode_utf16().collect();
-                            TextOutW(hdc, x, y, chars.as_ptr(), chars.len() as i32);
-                        }
-                    };
-                    draw_bracket_bg(cursor_line, byte);
-                    if let Some((ml, mb)) = match_pos {
-                        draw_bracket_bg(ml, mb);
-                    }
+                draw_bracket_bg(bracket.line, bracket.byte);
+                if let Some(other) = matching {
+                    draw_bracket_bg(other.line, other.byte);
                 }
                 DeleteObject(match_brush);
             }
@@ -711,5 +643,115 @@ impl App {
             }
             RestoreDC(hdc, saved);
         }
+    }
+
+    /// The bracket at or just before `pane`'s caret and the one it matches
+    /// (found within 500 lines), when brackets are highlighted there.
+    pub(in crate::windows_app) fn bracket_pair(&self, pane: usize) -> Option<(Pos, Option<Pos>)> {
+        if !self.settings.bracket_matching || pane != self.focused_pane || self.terminal_focus {
+            return None;
+        }
+        let doc = &self.tabs[self.tab_for_pane(pane)].document;
+        let view = self.view_for_pane(pane);
+        let bracket_at = |byte: usize, line_idx: usize| -> Option<(char, usize)> {
+            let text = doc.line(line_idx);
+            if byte >= text.len() || !text.is_char_boundary(byte) {
+                return None;
+            }
+            let ch = text[byte..].chars().next()?;
+            if matches!(ch, '(' | ')' | '[' | ']' | '{' | '}') {
+                Some((ch, byte))
+            } else {
+                None
+            }
+        };
+        let cursor_line = view.cursor.line;
+        let cursor_byte = view.cursor.byte;
+        // Check the character at the cursor, then the one before it.
+        let bracket = bracket_at(cursor_byte, cursor_line).or_else(|| {
+            if cursor_byte > 0 {
+                let text = doc.line(cursor_line);
+                let prev_byte = safe_slice_prefix(text, cursor_byte)
+                    .char_indices()
+                    .last()
+                    .map(|(i, _)| i)?;
+                bracket_at(prev_byte, cursor_line)
+            } else {
+                None
+            }
+        });
+        let (ch, byte) = bracket?;
+        let (open, close, forward) = match ch {
+            '(' => ('(', ')', true),
+            ')' => ('(', ')', false),
+            '[' => ('[', ']', true),
+            ']' => ('[', ']', false),
+            '{' => ('{', '}', true),
+            '}' => ('{', '}', false),
+            _ => ('(', ')', true),
+        };
+        // Scan for the matching bracket, tracking nesting depth.
+        let mut depth: i32 = 0;
+        let mut match_pos: Option<(usize, usize)> = None;
+        if forward {
+            let mut scan_line = cursor_line;
+            let mut scan_start = byte;
+            'outer_fwd: while scan_line < doc.line_count() && scan_line < cursor_line + 500 {
+                let text = doc.line(scan_line);
+                let scan_text = if scan_start < text.len() && text.is_char_boundary(scan_start) {
+                    &text[scan_start..]
+                } else {
+                    ""
+                };
+                for (i, c) in scan_text.char_indices() {
+                    let abs = scan_start + i;
+                    if c == open {
+                        depth += 1;
+                    }
+                    if c == close {
+                        depth -= 1;
+                    }
+                    if depth == 0 {
+                        match_pos = Some((scan_line, abs));
+                        break 'outer_fwd;
+                    }
+                }
+                scan_line += 1;
+                scan_start = 0;
+            }
+        } else {
+            let mut scan_line = cursor_line;
+            let mut first = true;
+            'outer_bwd: loop {
+                let text = doc.line(scan_line);
+                let end = if first { byte } else { text.len() };
+                first = false;
+                let bwd_text = safe_slice_prefix(text, end);
+                let indices: Vec<(usize, char)> = bwd_text.char_indices().collect();
+                for &(i, c) in indices.iter().rev() {
+                    if c == close {
+                        depth += 1;
+                    }
+                    if c == open {
+                        depth -= 1;
+                    }
+                    if depth == 0 {
+                        match_pos = Some((scan_line, i));
+                        break 'outer_bwd;
+                    }
+                }
+                if scan_line == 0 || cursor_line - scan_line > 500 {
+                    break;
+                }
+                scan_line -= 1;
+            }
+        }
+        Some((
+            Pos {
+                line: cursor_line,
+                byte,
+            },
+            match_pos.map(|(line, byte)| Pos { line, byte }),
+        ))
     }
 }

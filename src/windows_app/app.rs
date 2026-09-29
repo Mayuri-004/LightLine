@@ -2638,11 +2638,14 @@ impl App {
     }
 
     /// Recomputes the active buffer's gutter marks against its cached HEAD
-    /// text. The diff runs on a worker thread against a snapshot of the
-    /// buffer; `gutter_generation` discards a result that a newer request has
-    /// already superseded.
+    /// text. Only the lines that differ from HEAD are copied (every line of
+    /// the file used to be, after each pause in typing): a few are compared
+    /// right here, more on a worker thread, where `gutter_generation`
+    /// discards a result that a newer request has already superseded.
     pub(super) fn start_gutter_diff(&mut self) {
         const LIVE_GUTTER_LINE_LIMIT: usize = 50_000;
+        // Differing lines compared on the UI thread; a few microseconds.
+        const INLINE_GUTTER_LINES: usize = 64;
         unsafe { KillTimer(self.hwnd, GUTTER_DIFF_TIMER) };
         let Some(path) = self.doc().path.clone() else {
             return;
@@ -2651,15 +2654,24 @@ impl App {
         if self.doc().line_count() > LIVE_GUTTER_LINE_LIMIT {
             self.git_diff_cache.remove(&path);
         } else if let Some(head_text) = self.git_head_cache.get(&path).cloned() {
-            let lines = self.doc().lines().to_vec();
-            let generation = self.gutter_generation;
-            let tx = self.worker_tx.clone();
-            self.worker_started(self.hwnd);
-            std::thread::spawn(move || {
-                let diff = workflow::compute_gutter_diff(&head_text, &lines);
-                let _ = tx.send(WorkerMessage::GutterComputed(generation, path, diff));
-            });
-            return;
+            match workflow::gutter_work(&head_text, self.doc().lines()) {
+                workflow::GutterWork::Done(diff) => {
+                    self.git_diff_cache.insert(path, diff);
+                }
+                workflow::GutterWork::Job(job) if job.lines() <= INLINE_GUTTER_LINES => {
+                    self.git_diff_cache.insert(path, job.run());
+                }
+                workflow::GutterWork::Job(job) => {
+                    let generation = self.gutter_generation;
+                    let tx = self.worker_tx.clone();
+                    self.worker_started(self.hwnd);
+                    std::thread::spawn(move || {
+                        let diff = job.run();
+                        let _ = tx.send(WorkerMessage::GutterComputed(generation, path, diff));
+                    });
+                    return;
+                }
+            }
         } else if self.git_untracked.contains(&path) {
             let added = (0..self.doc().line_count()).collect();
             self.git_diff_cache.insert(

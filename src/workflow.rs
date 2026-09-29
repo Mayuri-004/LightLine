@@ -1293,33 +1293,78 @@ fn mark_gutter_hunk(
 /// region is classified on its own, so unchanged lines between two edits are
 /// never marked.
 pub fn compute_gutter_diff(head_text: &str, buf_lines: &[String]) -> GutterDiff {
+    match gutter_work(head_text, buf_lines) {
+        GutterWork::Done(diff) => diff,
+        GutterWork::Job(job) => job.run(),
+    }
+}
+
+/// A gutter diff split in two: the lines the buffer shares with its HEAD text
+/// at the start and the end are compared in place, without copying, which is
+/// cheap enough for the UI thread; what differs in between is copied into a
+/// job that can run on another thread. While typing that's a line or two:
+/// copying every line of the file for each diff was the costly part.
+pub enum GutterWork {
+    Done(GutterDiff),
+    Job(GutterJob),
+}
+
+pub struct GutterJob {
+    prefix: usize,
+    buffer_len: usize,
+    old: Vec<String>,
+    new: Vec<String>,
+}
+
+impl GutterJob {
+    /// How many lines differ, HEAD's and the buffer's together.
+    pub fn lines(&self) -> usize {
+        self.old.len() + self.new.len()
+    }
+
+    pub fn run(self) -> GutterDiff {
+        let old: Vec<&str> = self.old.iter().map(String::as_str).collect();
+        let new: Vec<&str> = self.new.iter().map(String::as_str).collect();
+        diff_between(self.prefix, &old, &new, self.buffer_len)
+    }
+}
+
+pub fn gutter_work(head_text: &str, buf_lines: &[String]) -> GutterWork {
     // Split exactly the way Document does ("a\n" is two lines, "a" and ""),
     // so a file's final newline never reads as an added line.
     let head_lines: Vec<&str> = head_text
         .split('\n')
         .map(|line| line.strip_suffix('\r').unwrap_or(line))
         .collect();
-    let buf: Vec<&str> = buf_lines.iter().map(String::as_str).collect();
-    let (n, m) = (head_lines.len(), buf.len());
-    let mut diff = GutterDiff::default();
+    let (n, m) = (head_lines.len(), buf_lines.len());
 
     let mut prefix = 0;
-    while prefix < n && prefix < m && head_lines[prefix] == buf[prefix] {
+    while prefix < n && prefix < m && head_lines[prefix] == buf_lines[prefix] {
         prefix += 1;
     }
     let mut suffix = 0;
     while suffix < n - prefix
         && suffix < m - prefix
-        && head_lines[n - 1 - suffix] == buf[m - 1 - suffix]
+        && head_lines[n - 1 - suffix] == buf_lines[m - 1 - suffix]
     {
         suffix += 1;
     }
     let old = &head_lines[prefix..n - suffix];
-    let new = &buf[prefix..m - suffix];
+    let new = &buf_lines[prefix..m - suffix];
     if old.is_empty() && new.is_empty() {
-        return diff;
+        return GutterWork::Done(GutterDiff::default());
     }
+    GutterWork::Job(GutterJob {
+        prefix,
+        buffer_len: m,
+        old: old.iter().map(|line| (*line).to_owned()).collect(),
+        new: new.to_vec(),
+    })
+}
 
+// Classifies the lines between the shared start (`prefix` lines) and end.
+fn diff_between(prefix: usize, old: &[&str], new: &[&str], m: usize) -> GutterDiff {
+    let mut diff = GutterDiff::default();
     let max_d = (GUTTER_DIFF_BUDGET / (old.len() + new.len()).max(1)).max(8);
     let Some(ops) = myers_line_ops(old, new, max_d) else {
         mark_gutter_hunk(&mut diff, prefix, old.len(), new.len(), m);
@@ -1921,5 +1966,26 @@ mod tests {
         let new: String = (0..5000).map(|i| format!("new {i}\n")).collect();
         let diff = compute_gutter_diff(&head, &buffer(&new));
         assert_eq!(diff.modified.len(), 5000);
+    }
+
+    #[test]
+    fn gutter_job_copies_only_the_lines_that_differ() {
+        let head: String = (0..2000).map(|i| format!("line {i}\n")).collect();
+        let edited = head.replacen("line 1000\n", "line 1000 typed\n", 1);
+        let lines = buffer(&edited);
+        match gutter_work(&head, &lines) {
+            GutterWork::Job(job) => {
+                // One line of HEAD against one of the buffer, not 4000.
+                assert_eq!(job.lines(), 2);
+                let diff = job.run();
+                assert_eq!(sorted(&diff.modified), vec![1000]);
+                assert_eq!(diff, compute_gutter_diff(&head, &lines));
+            }
+            GutterWork::Done(_) => panic!("the edited line should differ"),
+        }
+        assert!(matches!(
+            gutter_work(&head, &buffer(&head)),
+            GutterWork::Done(diff) if diff == GutterDiff::default()
+        ));
     }
 }

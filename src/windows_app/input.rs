@@ -719,6 +719,7 @@ impl App {
         }
         // Checked before the key acts: Backspace and Delete clear a hover card.
         let stays_in_editor = self.keystroke_stays_in_editor();
+        let before = self.caret_frame(hwnd);
         match key {
             x if x == VK_F1 as u32 => {
                 self.hover_at_cursor(hwnd);
@@ -849,16 +850,25 @@ impl App {
             }
             _ => return false,
         }
-        self.refresh_after_keystroke(hwnd, stays_in_editor);
+        self.refresh_after_editor_input(hwnd, stays_in_editor, &before);
         true
     }
 
-    // After a key moved the caret or edited text: redraws the editor and the
-    // status bar, or everything when something outside them may have changed.
-    fn refresh_after_keystroke(&mut self, hwnd: HWND, stays_in_editor: bool) {
+    // After a key or a click moved the caret, selected or edited text: redraws
+    // what that changed in the editor and the status bar (see caret_changes),
+    // or everything when something outside them may have changed.
+    fn refresh_after_editor_input(
+        &mut self,
+        hwnd: HWND,
+        stays_in_editor: bool,
+        before: &CaretFrame,
+    ) {
         if stays_in_editor {
-            let areas = [self.editor_area(hwnd, true), self.status_area(hwnd)];
-            self.repaint_only(hwnd, &areas, |app| app.refresh(hwnd));
+            // Measured after refresh, which can scroll to the caret.
+            self.repaint_only(hwnd, &[], |app| app.refresh(hwnd));
+            for area in self.caret_changes(hwnd, before) {
+                unsafe { InvalidateRect(hwnd, &area, 0) };
+            }
         } else {
             self.refresh(hwnd);
         }
@@ -1055,6 +1065,7 @@ impl App {
             };
             // Checked before the edit, which clears a hover card.
             let stays_in_editor = self.keystroke_stays_in_editor();
+            let before = self.caret_frame(hwnd);
             self.cancel_transition(hwnd);
             self.replace_selection(&text);
             // For auto-close pairs, move the cursor back before the closing char.
@@ -1062,7 +1073,7 @@ impl App {
                 let pos = self.doc().previous(self.view().cursor);
                 self.view_mut().cursor = pos;
             }
-            self.refresh_after_keystroke(hwnd, stays_in_editor);
+            self.refresh_after_editor_input(hwnd, stays_in_editor, &before);
         }
     }
 
@@ -1890,6 +1901,15 @@ impl App {
             return;
         }
         let pos = self.position_at(hwnd, x, y);
+        // Only the editor and the status bar change, unless this click takes
+        // the keyboard from a box elsewhere, whose caret or outline goes.
+        let stays_in_editor = self.keystroke_stays_in_editor()
+            && !(self.panel_focus
+                || self.terminal_focus
+                || self.extensions_search_active
+                || self.search_input
+                || self.commit_focus);
+        let before = self.caret_frame(hwnd);
         self.panel_focus = false;
         self.terminal_focus = false;
         self.extensions_search_active = false;
@@ -1903,7 +1923,7 @@ impl App {
             SetFocus(hwnd);
             SetCapture(hwnd);
         }
-        self.refresh(hwnd);
+        self.refresh_after_editor_input(hwnd, stays_in_editor, &before);
     }
 
     pub(super) fn mouse_drag(&mut self, hwnd: HWND, x: i32, y: i32) {
@@ -1927,8 +1947,11 @@ impl App {
             return;
         }
         let pos = self.position_at(hwnd, x, y);
+        // Selecting by dragging redrew the whole window on every mouse move.
+        let stays_in_editor = self.keystroke_stays_in_editor();
+        let before = self.caret_frame(hwnd);
         self.move_cursor(pos, true);
-        self.refresh(hwnd);
+        self.refresh_after_editor_input(hwnd, stays_in_editor, &before);
     }
 
     /// Right-click on the editor's text: the AI actions for the error at the
