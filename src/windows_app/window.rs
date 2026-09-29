@@ -145,8 +145,9 @@ unsafe extern "system" fn wnd_proc(
             app.caret_on = true;
             unsafe {
                 SetTimer(hwnd, 1, 530, None);
+                // Focus shows in more than the caret, so all of it is redrawn.
+                InvalidateRect(hwnd, null(), 0);
             }
-            app.invalidate_caret(hwnd);
             app.poll_watcher(hwnd);
             // Coming back to the window is when an outside commit, pull or
             // branch switch is most likely to have happened.
@@ -159,14 +160,14 @@ unsafe extern "system" fn wnd_proc(
             app.dismiss_more_menu(hwnd);
             unsafe {
                 KillTimer(hwnd, 1);
+                InvalidateRect(hwnd, null(), 0);
             }
-            app.invalidate_caret(hwnd);
             0
         }
         WM_TIMER if wparam == 1 => {
             if app.focused {
                 app.caret_on = !app.caret_on;
-                app.invalidate_caret(hwnd);
+                app.invalidate_blink(hwnd);
             }
             0
         }

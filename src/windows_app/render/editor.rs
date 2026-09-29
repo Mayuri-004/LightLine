@@ -134,12 +134,66 @@ impl App {
         }
     }
 
+    // When everything to redraw lies inside the focused pane's text area (in
+    // practice a caret blink), draws only that: its background, the code
+    // pane and whatever floats over it. A full frame took 3–5 ms per blink,
+    // nearly all of it on panels outside the redrawn area, which the
+    // backbuffer still holds unchanged. False when the full frame is needed.
+    fn paint_code_area_only(&self, hwnd: HWND, hdc: HDC, dirty: RECT, window: RECT) -> bool {
+        let pane = self.focused_pane;
+        let editor_bottom = (window.bottom - self.scale(STATUS)).max(0);
+        let code_bottom = editor_bottom
+            - if self.terminal_visible {
+                self.scale(self.terminal_height)
+            } else {
+                0
+            };
+        let bounds = RECT {
+            left: self.pane_left(hwnd, pane),
+            top: self.editor_top(),
+            right: self.pane_right(hwnd, pane),
+            bottom: code_bottom,
+        };
+        let inside = dirty.right > dirty.left
+            && dirty.left >= self.code_left(hwnd)
+            && dirty.top >= bounds.top
+            && dirty.right <= bounds.right
+            && dirty.bottom <= bounds.bottom;
+        // A crossfade or a diff view draws over this area differently.
+        if !inside
+            || self.transition.is_some()
+            || (self.side_view == SideView::Review && self.review_file.is_some())
+        {
+            return false;
+        }
+        unsafe {
+            Self::fill(hdc, dirty, self.theme.editor_bg);
+            let selection_bg = CreateSolidBrush(self.theme.select_bg);
+            self.paint_code_pane(hdc, hwnd, pane, bounds, selection_bg);
+            DeleteObject(selection_bg);
+            SelectObject(hdc, self.ui_font);
+        }
+        self.paint_search_preview(hdc, bounds.left, bounds.right, code_bottom);
+        self.paint_quick_open(hdc, window);
+        self.paint_find_widget(hdc, hwnd);
+        self.paint_hover_card(hdc, window, editor_bottom);
+        self.paint_completion(hdc, window, editor_bottom);
+        self.paint_editor_context_menu(hdc, hwnd);
+        self.paint_more_menu(hdc, hwnd);
+        true
+    }
+
     pub(in crate::windows_app) fn paint(&mut self, hwnd: HWND) {
         unsafe {
             let mut ps = PAINTSTRUCT::default();
             let window_dc = BeginPaint(hwnd, &mut ps);
             let mut rect = RECT::default();
             GetClientRect(hwnd, &mut rect);
+            // Only the invalid area is drawn and copied to the screen: a caret
+            // blink used to redraw the whole window twice a second. The rest
+            // of the backbuffer still holds the last frame. A new backbuffer
+            // is blank, so it is drawn in full.
+            let mut dirty = ps.rcPaint;
             if self
                 .backbuffer
                 .as_ref()
@@ -148,11 +202,32 @@ impl App {
                 self.backbuffer = Surface::new(window_dc, rect.right, rect.bottom);
                 self.transition = None;
                 KillTimer(hwnd, 3);
+                dirty = rect;
             }
             let hdc = self
                 .backbuffer
                 .as_ref()
                 .map_or(window_dc, |buffer| buffer.dc);
+            // The backbuffer's DC outlives this paint, so its clip is undone
+            // before the frame is copied out.
+            let clip_state = SaveDC(hdc);
+            IntersectClipRect(hdc, dirty.left, dirty.top, dirty.right, dirty.bottom);
+            let present = |hdc: HDC| {
+                RestoreDC(hdc, clip_state);
+                if hdc != window_dc {
+                    BitBlt(
+                        window_dc,
+                        dirty.left,
+                        dirty.top,
+                        dirty.right - dirty.left,
+                        dirty.bottom - dirty.top,
+                        hdc,
+                        dirty.left,
+                        dirty.top,
+                        SRCCOPY,
+                    );
+                }
+            };
             let old_font = SelectObject(hdc, self.font);
             SelectObject(hdc, self.ui_font);
             SetBkMode(hdc, TRANSPARENT as i32);
@@ -160,9 +235,13 @@ impl App {
                 self.paint_welcome(hwnd, hdc, rect);
                 self.paint_quick_open(hdc, rect);
                 SelectObject(hdc, old_font);
-                if hdc != window_dc {
-                    BitBlt(window_dc, 0, 0, rect.right, rect.bottom, hdc, 0, 0, SRCCOPY);
-                }
+                present(hdc);
+                EndPaint(hwnd, &ps);
+                return;
+            }
+            if self.paint_code_area_only(hwnd, hdc, dirty, rect) {
+                SelectObject(hdc, old_font);
+                present(hdc);
                 EndPaint(hwnd, &ps);
                 return;
             }
@@ -1344,9 +1423,7 @@ impl App {
             self.paint_editor_context_menu(hdc, hwnd);
             self.paint_more_menu(hdc, hwnd);
             SelectObject(hdc, old_font);
-            if hdc != window_dc {
-                BitBlt(window_dc, 0, 0, rect.right, rect.bottom, hdc, 0, 0, SRCCOPY);
-            }
+            present(hdc);
             EndPaint(hwnd, &ps);
         }
     }

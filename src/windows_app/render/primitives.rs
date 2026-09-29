@@ -87,7 +87,12 @@ impl App {
                 Self::fill(hdc, rect, top_color);
                 return;
             }
-            SelectClipRgn(hdc, region);
+            // Within whatever clip is already set (the part of the window
+            // being repainted, an enclosing card), and put back afterwards:
+            // replacing the clip, then clearing it, left the rest of the
+            // frame unclipped.
+            let saved = SaveDC(hdc);
+            ExtSelectClipRgn(hdc, region, RGN_AND);
             GradientFill(
                 hdc,
                 vertices.as_ptr(),
@@ -96,7 +101,7 @@ impl App {
                 1,
                 GRADIENT_FILL_RECT_V,
             );
-            SelectClipRgn(hdc, null_mut());
+            RestoreDC(hdc, saved);
             DeleteObject(region);
         }
     }
@@ -189,6 +194,25 @@ impl App {
         let rect = self.caret_rect(hwnd);
         unsafe {
             InvalidateRect(hwnd, &rect, 0);
+        }
+    }
+
+    /// Redraws what a caret blink changes. Usually that's just the editor's
+    /// caret; when a text box elsewhere has the caret (Quick Open, the
+    /// terminal, a search box or the commit message), the whole window is
+    /// redrawn, as each paints its own caret from `caret_on`.
+    pub(in crate::windows_app) fn invalidate_blink(&self, hwnd: HWND) {
+        let editor_only = !self.welcome
+            && !self.quick_open
+            && !self.terminal_focus
+            && !self.search_input
+            && !self.panel_focus
+            && !self.extensions_search_active
+            && !self.commit_focus;
+        if editor_only {
+            self.invalidate_caret(hwnd);
+        } else {
+            unsafe { InvalidateRect(hwnd, null(), 0) };
         }
     }
 
