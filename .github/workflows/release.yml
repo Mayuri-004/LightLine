@@ -245,7 +245,7 @@ jobs:
 
       # This repository is also a Scoop bucket (bucket/lightline.json), so
       # `scoop install lightline` gets the new version. Pre-releases such as
-      # 0.4.0-beta.1 are left out. Pushes made with GITHUB_TOKEN don't start
+      # 0.3.1-beta.1 are left out. Pushes made with GITHUB_TOKEN don't start
       # other workflows, so this commit doesn't trigger the Rust check.
       - name: Update the Scoop manifest
         if: ${{ !contains(needs.release-request.outputs.version, '-') }}

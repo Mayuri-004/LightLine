@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.3.1] - 2026-09-29
+
+Released as `lightline.exe` (x64), `lightline-arm64.exe`, `lightline-v0.3.1-windows-x86_64.zip`, `lightline-v0.3.1-windows-arm64.zip` and `SHA256SUMS.txt`. Still unsigned, like v0.3.0: check the file against `SHA256SUMS.txt`, then choose **More info** → **Run anyway** if SmartScreen warns.
+
 #### Added
 - **Windows on ARM**: Each release now includes a native ARM64 build (`lightline-arm64.exe` and `lightline-vX.Y.Z-windows-arm64.zip`) for Snapdragon and other Windows on ARM PCs, which previously ran the x64 build under emulation. It's built and tested on GitHub's Windows 11 ARM machines, and the everyday Rust check now builds and tests ARM64 on every push too.
 - **Install with Scoop**: `scoop bucket add lightline https://github.com/mehmoodulhaq570/LightLine`, then `scoop install lightline`. Scoop adds LightLine to the Start menu and to the command line, and `scoop update lightline` gets new versions: each release updates the bucket's manifest automatically, for both x64 and ARM64.
