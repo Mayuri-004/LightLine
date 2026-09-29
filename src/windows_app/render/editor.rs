@@ -185,6 +185,9 @@ impl App {
 
     pub(in crate::windows_app) fn paint(&mut self, hwnd: HWND) {
         unsafe {
+            // The update region itself, read before BeginPaint validates it.
+            let update = CreateRectRgn(0, 0, 0, 0);
+            let has_update = !update.is_null() && GetUpdateRgn(hwnd, update, 0) != 0;
             let mut ps = PAINTSTRUCT::default();
             let window_dc = BeginPaint(hwnd, &mut ps);
             let mut rect = RECT::default();
@@ -194,6 +197,7 @@ impl App {
             // of the backbuffer still holds the last frame. A new backbuffer
             // is blank, so it is drawn in full.
             let mut dirty = ps.rcPaint;
+            let mut fresh = false;
             if self
                 .backbuffer
                 .as_ref()
@@ -203,15 +207,28 @@ impl App {
                 self.transition = None;
                 KillTimer(hwnd, 3);
                 dirty = rect;
+                fresh = true;
             }
             let hdc = self
                 .backbuffer
                 .as_ref()
                 .map_or(window_dc, |buffer| buffer.dc);
             // The backbuffer's DC outlives this paint, so its clip is undone
-            // before the frame is copied out.
+            // before the frame is copied out. It's the update region itself,
+            // not its bounding box: typing redraws the editor and the status
+            // bar, whose box would cover nearly the whole window. The sections
+            // it misses are skipped below (`shows`).
             let clip_state = SaveDC(hdc);
-            IntersectClipRect(hdc, dirty.left, dirty.top, dirty.right, dirty.bottom);
+            if has_update && !fresh {
+                SelectClipRgn(hdc, update);
+            } else {
+                IntersectClipRect(hdc, dirty.left, dirty.top, dirty.right, dirty.bottom);
+            }
+            if !update.is_null() {
+                DeleteObject(update);
+            }
+            // Whether any of `area` is being redrawn.
+            let shows = |area: RECT| RectVisible(hdc, &area) != 0;
             let present = |hdc: HDC| {
                 RestoreDC(hdc, clip_state);
                 if hdc != window_dc {
@@ -297,97 +314,105 @@ impl App {
                 },
                 self.theme.edge,
             );
-            DrawIconEx(
-                hdc,
-                self.scale(14),
-                self.scale(9),
-                self.brand_icon,
-                self.scale(32),
-                self.scale(32),
-                0,
-                null_mut(),
-                DI_NORMAL,
-            );
-            SelectObject(hdc, self.brand_font);
-            Self::label(
-                hdc,
-                "LightLine",
-                self.scale(56),
-                self.scale(12),
-                self.theme.text,
-                RECT {
-                    left: self.scale(56),
-                    top: 0,
-                    right: self.scale(160),
-                    bottom: chrome_top,
-                },
-            );
-            Self::rounded_fill(
-                hdc,
-                RECT {
-                    left: self.scale(132),
-                    top: self.scale(15),
-                    right: self.scale(164),
-                    bottom: self.scale(35),
-                },
-                self.scale(5),
-                ui(63, 47, 150),
-            );
-            SelectObject(hdc, self.ui_font);
-            Self::label(
-                hdc,
-                "IDE",
-                self.scale(138),
-                self.scale(15),
-                self.theme.text,
-                RECT {
-                    left: self.scale(132),
-                    top: 0,
-                    right: self.scale(164),
-                    bottom: chrome_top,
-                },
-            );
-            let title_button = self.scale(46);
-            let controls_left = rect.right - title_button * 3;
-            let controls_mid_y = chrome_top / 2;
-            self.stroke(hdc, self.theme.muted, |hdc| {
-                // Minimize
-                MoveToEx(
+            let header = RECT {
+                left: 0,
+                top: 0,
+                right: rect.right,
+                bottom: chrome_top,
+            };
+            if shows(header) {
+                DrawIconEx(
                     hdc,
-                    controls_left + self.scale(17),
-                    controls_mid_y + self.scale(5),
+                    self.scale(14),
+                    self.scale(9),
+                    self.brand_icon,
+                    self.scale(32),
+                    self.scale(32),
+                    0,
                     null_mut(),
+                    DI_NORMAL,
                 );
-                LineTo(
+                SelectObject(hdc, self.brand_font);
+                Self::label(
                     hdc,
-                    controls_left + self.scale(29),
-                    controls_mid_y + self.scale(5),
+                    "LightLine",
+                    self.scale(56),
+                    self.scale(12),
+                    self.theme.text,
+                    RECT {
+                        left: self.scale(56),
+                        top: 0,
+                        right: self.scale(160),
+                        bottom: chrome_top,
+                    },
                 );
-                // Maximize / restore
-                let max_left = controls_left + title_button + self.scale(17);
-                Rectangle(
+                Self::rounded_fill(
                     hdc,
-                    max_left,
-                    controls_mid_y - self.scale(6),
-                    max_left + self.scale(12),
-                    controls_mid_y + self.scale(6),
+                    RECT {
+                        left: self.scale(132),
+                        top: self.scale(15),
+                        right: self.scale(164),
+                        bottom: self.scale(35),
+                    },
+                    self.scale(5),
+                    ui(63, 47, 150),
                 );
-                // Close
-                let close_left = controls_left + title_button * 2 + self.scale(17);
-                MoveToEx(hdc, close_left, controls_mid_y - self.scale(6), null_mut());
-                LineTo(
+                SelectObject(hdc, self.ui_font);
+                Self::label(
                     hdc,
-                    close_left + self.scale(12),
-                    controls_mid_y + self.scale(6),
+                    "IDE",
+                    self.scale(138),
+                    self.scale(15),
+                    self.theme.text,
+                    RECT {
+                        left: self.scale(132),
+                        top: 0,
+                        right: self.scale(164),
+                        bottom: chrome_top,
+                    },
                 );
-                MoveToEx(
-                    hdc,
-                    close_left + self.scale(12),
-                    controls_mid_y - self.scale(6),
-                    null_mut(),
-                );
-                LineTo(hdc, close_left, controls_mid_y + self.scale(6));
-            });
+                let title_button = self.scale(46);
+                let controls_left = rect.right - title_button * 3;
+                let controls_mid_y = chrome_top / 2;
+                self.stroke(hdc, self.theme.muted, |hdc| {
+                    // Minimize
+                    MoveToEx(
+                        hdc,
+                        controls_left + self.scale(17),
+                        controls_mid_y + self.scale(5),
+                        null_mut(),
+                    );
+                    LineTo(
+                        hdc,
+                        controls_left + self.scale(29),
+                        controls_mid_y + self.scale(5),
+                    );
+                    // Maximize / restore
+                    let max_left = controls_left + title_button + self.scale(17);
+                    Rectangle(
+                        hdc,
+                        max_left,
+                        controls_mid_y - self.scale(6),
+                        max_left + self.scale(12),
+                        controls_mid_y + self.scale(6),
+                    );
+                    // Close
+                    let close_left = controls_left + title_button * 2 + self.scale(17);
+                    MoveToEx(hdc, close_left, controls_mid_y - self.scale(6), null_mut());
+                    LineTo(
+                        hdc,
+                        close_left + self.scale(12),
+                        controls_mid_y + self.scale(6),
+                    );
+                    MoveToEx(
+                        hdc,
+                        close_left + self.scale(12),
+                        controls_mid_y - self.scale(6),
+                        null_mut(),
+                    );
+                    LineTo(hdc, close_left, controls_mid_y + self.scale(6));
+                });
+            }
             if self.sidebar_width > 0 {
                 let panel = RECT {
                     left: self.scale(RAIL) + gap,
@@ -484,227 +509,235 @@ impl App {
                 },
                 self.theme.edge,
             );
-            for pane in 0..if self.split_visible { 2 } else { 1 } {
-                let left = self.pane_left(hwnd, pane);
-                let right = self.pane_right(hwnd, pane);
-                // Both glyphs below are centered inside the rects the mouse
-                // handler tests, so the control a click lands on is the control
-                // actually drawn there.
-                let (split_rect, more_rect) = self.pane_actions(right);
-                let tab_index = self.tab_for_pane(pane);
-                // No file is open: no "Editor > Untitled" path, no controls.
-                if self.tabs[tab_index].is_placeholder() {
-                    continue;
-                }
-                let path_part = self.tabs[tab_index]
-                    .display_path()
-                    .and_then(Path::parent)
-                    .and_then(Path::file_name)
-                    .map(|part| part.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "Editor".into());
-                Self::label(
-                    hdc,
-                    &format!("{}  >  {}", path_part, self.tab_label(tab_index)),
-                    left + self.scale(18),
-                    tab_strip_bottom + self.scale(3),
-                    if pane == self.focused_pane {
-                        self.theme.text
-                    } else {
-                        self.theme.muted
-                    },
-                    RECT {
-                        left,
-                        top: tab_strip_bottom,
-                        right: split_rect.left - self.scale(6),
-                        bottom: self.editor_top(),
-                    },
-                );
-                for (rect, glyph) in [(&split_rect, "[\u{2502}]"), (&more_rect, "\u{2026}")] {
-                    let glyph_x =
-                        rect.left + (rect.right - rect.left - self.text_width(hdc, glyph)) / 2;
+            // Tabs and breadcrumbs: a syntax or gutter update doesn't reach them.
+            if shows(RECT {
+                left: editor_left,
+                top: chrome_top,
+                right: editor_card.right,
+                bottom: self.editor_top(),
+            }) {
+                for pane in 0..if self.split_visible { 2 } else { 1 } {
+                    let left = self.pane_left(hwnd, pane);
+                    let right = self.pane_right(hwnd, pane);
+                    // Both glyphs below are centered inside the rects the mouse
+                    // handler tests, so the control a click lands on is the control
+                    // actually drawn there.
+                    let (split_rect, more_rect) = self.pane_actions(right);
+                    let tab_index = self.tab_for_pane(pane);
+                    // No file is open: no "Editor > Untitled" path, no controls.
+                    if self.tabs[tab_index].is_placeholder() {
+                        continue;
+                    }
+                    let path_part = self.tabs[tab_index]
+                        .display_path()
+                        .and_then(Path::parent)
+                        .and_then(Path::file_name)
+                        .map(|part| part.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| "Editor".into());
                     Self::label(
                         hdc,
-                        glyph,
-                        glyph_x,
+                        &format!("{}  >  {}", path_part, self.tab_label(tab_index)),
+                        left + self.scale(18),
                         tab_strip_bottom + self.scale(3),
-                        self.theme.muted,
+                        if pane == self.focused_pane {
+                            self.theme.text
+                        } else {
+                            self.theme.muted
+                        },
                         RECT {
-                            left: split_rect.left,
+                            left,
                             top: tab_strip_bottom,
-                            right,
+                            right: split_rect.left - self.scale(6),
                             bottom: self.editor_top(),
                         },
                     );
-                }
-                if self.split_visible && pane == self.focused_pane {
-                    Self::fill(
-                        hdc,
-                        RECT {
-                            left,
-                            top: tab_strip_bottom + self.scale(BREADCRUMB_HEIGHT - 2),
-                            right,
-                            bottom: tab_strip_bottom + self.scale(BREADCRUMB_HEIGHT),
-                        },
-                        self.theme.blue,
-                    );
-                }
-            }
-            let tab_width = self.scale(TAB_WIDTH);
-            for slot in 0..self.visible_tab_count(hwnd) {
-                let index = self.tab_first + slot;
-                if index >= self.tabs.len() {
-                    break;
-                }
-                if self.tabs[index].is_placeholder() {
-                    continue;
-                }
-                let left = editor_left + slot as i32 * tab_width;
-                if left >= editor_card.right {
-                    break;
-                }
-                let bounds = RECT {
-                    left,
-                    top: chrome_top,
-                    right: (left + tab_width).min(editor_card.right),
-                    bottom: tab_strip_bottom,
-                };
-                if index == self.active {
-                    FillRect(hdc, &bounds, active_bg);
-                    Self::fill(
-                        hdc,
-                        RECT {
-                            left,
-                            top: chrome_top,
-                            right: bounds.right,
-                            bottom: chrome_top + self.scale(2),
-                        },
-                        self.theme.violet,
-                    );
-                }
-                let use_theme = self.has_extension("material-icons");
-                match self.tabs[index].display_path() {
-                    Some(path) => {
-                        if !self.icons.draw_for_path(
+                    for (rect, glyph) in [(&split_rect, "[\u{2502}]"), (&more_rect, "\u{2026}")] {
+                        let glyph_x =
+                            rect.left + (rect.right - rect.left - self.text_width(hdc, glyph)) / 2;
+                        Self::label(
                             hdc,
-                            path,
-                            false,
-                            false,
-                            use_theme,
-                            left + self.scale(11),
-                            chrome_top + self.scale(9),
-                            self.scale(18),
-                        ) {
-                            self.draw_vector_file(
+                            glyph,
+                            glyph_x,
+                            tab_strip_bottom + self.scale(3),
+                            self.theme.muted,
+                            RECT {
+                                left: split_rect.left,
+                                top: tab_strip_bottom,
+                                right,
+                                bottom: self.editor_top(),
+                            },
+                        );
+                    }
+                    if self.split_visible && pane == self.focused_pane {
+                        Self::fill(
+                            hdc,
+                            RECT {
+                                left,
+                                top: tab_strip_bottom + self.scale(BREADCRUMB_HEIGHT - 2),
+                                right,
+                                bottom: tab_strip_bottom + self.scale(BREADCRUMB_HEIGHT),
+                            },
+                            self.theme.blue,
+                        );
+                    }
+                }
+                let tab_width = self.scale(TAB_WIDTH);
+                for slot in 0..self.visible_tab_count(hwnd) {
+                    let index = self.tab_first + slot;
+                    if index >= self.tabs.len() {
+                        break;
+                    }
+                    if self.tabs[index].is_placeholder() {
+                        continue;
+                    }
+                    let left = editor_left + slot as i32 * tab_width;
+                    if left >= editor_card.right {
+                        break;
+                    }
+                    let bounds = RECT {
+                        left,
+                        top: chrome_top,
+                        right: (left + tab_width).min(editor_card.right),
+                        bottom: tab_strip_bottom,
+                    };
+                    if index == self.active {
+                        FillRect(hdc, &bounds, active_bg);
+                        Self::fill(
+                            hdc,
+                            RECT {
+                                left,
+                                top: chrome_top,
+                                right: bounds.right,
+                                bottom: chrome_top + self.scale(2),
+                            },
+                            self.theme.violet,
+                        );
+                    }
+                    let use_theme = self.has_extension("material-icons");
+                    match self.tabs[index].display_path() {
+                        Some(path) => {
+                            if !self.icons.draw_for_path(
                                 hdc,
                                 path,
+                                false,
+                                false,
+                                use_theme,
                                 left + self.scale(11),
                                 chrome_top + self.scale(9),
                                 self.scale(18),
-                            );
+                            ) {
+                                self.draw_vector_file(
+                                    hdc,
+                                    path,
+                                    left + self.scale(11),
+                                    chrome_top + self.scale(9),
+                                    self.scale(18),
+                                );
+                            }
                         }
-                    }
-                    None => {
-                        if !self.icons.draw_generic(
-                            hdc,
-                            GenericIcon::File,
-                            left + self.scale(11),
-                            chrome_top + self.scale(9),
-                            self.scale(18),
-                        ) {
-                            self.draw_vector_file(
+                        None => {
+                            if !self.icons.draw_generic(
                                 hdc,
-                                std::path::Path::new("untitled"),
+                                GenericIcon::File,
                                 left + self.scale(11),
                                 chrome_top + self.scale(9),
                                 self.scale(18),
-                            );
+                            ) {
+                                self.draw_vector_file(
+                                    hdc,
+                                    std::path::Path::new("untitled"),
+                                    left + self.scale(11),
+                                    chrome_top + self.scale(9),
+                                    self.scale(18),
+                                );
+                            }
                         }
                     }
+                    let label = self.tab_label(index);
+                    let chars: Vec<u16> = label.encode_utf16().collect();
+                    SetTextColor(
+                        hdc,
+                        if index == self.active {
+                            self.theme.text
+                        } else {
+                            self.theme.muted
+                        },
+                    );
+                    let clip = RECT {
+                        left: left + self.scale(37),
+                        top: chrome_top,
+                        right: (left + tab_width - self.scale(30)).min(editor_card.right),
+                        bottom: tab_strip_bottom,
+                    };
+                    ExtTextOutW(
+                        hdc,
+                        clip.left,
+                        chrome_top + self.scale(5),
+                        ETO_CLIPPED,
+                        &clip,
+                        chars.as_ptr(),
+                        chars.len() as u32,
+                        null(),
+                    );
+                    let close = wide("×");
+                    TextOutW(
+                        hdc,
+                        left + tab_width - self.scale(23),
+                        chrome_top + self.scale(5),
+                        close.as_ptr(),
+                        1,
+                    );
                 }
-                let label = self.tab_label(index);
-                let chars: Vec<u16> = label.encode_utf16().collect();
-                SetTextColor(
-                    hdc,
-                    if index == self.active {
-                        self.theme.text
-                    } else {
-                        self.theme.muted
-                    },
-                );
-                let clip = RECT {
-                    left: left + self.scale(37),
-                    top: chrome_top,
-                    right: (left + tab_width - self.scale(30)).min(editor_card.right),
-                    bottom: tab_strip_bottom,
-                };
-                ExtTextOutW(
-                    hdc,
-                    clip.left,
-                    chrome_top + self.scale(5),
-                    ETO_CLIPPED,
-                    &clip,
-                    chars.as_ptr(),
-                    chars.len() as u32,
-                    null(),
-                );
-                let close = wide("×");
-                TextOutW(
-                    hdc,
-                    left + tab_width - self.scale(23),
-                    chrome_top + self.scale(5),
-                    close.as_ptr(),
-                    1,
-                );
-            }
-            // The active file's action button: run it, or preview Markdown.
-            if let Some(action) = self.shown_file_action(hwnd) {
-                let button = self.file_action_rect(hwnd);
-                match action {
-                    FileAction::PreviewMarkdown => {
-                        // Highlighted while the preview is open, like a toggle.
-                        if self.preview_beside().is_some() {
-                            let size = self.scale(26);
-                            let left = button.left + (button.right - button.left - size) / 2;
-                            let top = button.top + (button.bottom - button.top - size) / 2;
-                            Self::rounded_fill(
-                                hdc,
-                                RECT {
-                                    left,
-                                    top,
-                                    right: left + size,
-                                    bottom: top + size,
-                                },
-                                self.scale(5),
-                                self.theme.select_bg,
-                            );
+                // The active file's action button: run it, or preview Markdown.
+                if let Some(action) = self.shown_file_action(hwnd) {
+                    let button = self.file_action_rect(hwnd);
+                    match action {
+                        FileAction::PreviewMarkdown => {
+                            // Highlighted while the preview is open, like a toggle.
+                            if self.preview_beside().is_some() {
+                                let size = self.scale(26);
+                                let left = button.left + (button.right - button.left - size) / 2;
+                                let top = button.top + (button.bottom - button.top - size) / 2;
+                                Self::rounded_fill(
+                                    hdc,
+                                    RECT {
+                                        left,
+                                        top,
+                                        right: left + size,
+                                        bottom: top + size,
+                                    },
+                                    self.scale(5),
+                                    self.theme.select_bg,
+                                );
+                            }
+                            self.paint_preview_icon(hdc, button);
                         }
-                        self.paint_preview_icon(hdc, button);
-                    }
-                    FileAction::Run => {
-                        let left = button.left + self.scale(4);
-                        let brush = CreateSolidBrush(self.theme.green);
-                        let pen = CreatePen(PS_SOLID, 1, self.theme.green);
-                        let old_brush = SelectObject(hdc, brush);
-                        let old_pen = SelectObject(hdc, pen);
-                        let points = [
-                            POINT {
-                                x: left + self.scale(9),
-                                y: chrome_top + self.scale(11),
-                            },
-                            POINT {
-                                x: left + self.scale(9),
-                                y: chrome_top + self.scale(27),
-                            },
-                            POINT {
-                                x: left + self.scale(23),
-                                y: chrome_top + self.scale(19),
-                            },
-                        ];
-                        Polygon(hdc, points.as_ptr(), 3);
-                        SelectObject(hdc, old_brush);
-                        SelectObject(hdc, old_pen);
-                        DeleteObject(brush);
-                        DeleteObject(pen);
+                        FileAction::Run => {
+                            let left = button.left + self.scale(4);
+                            let brush = CreateSolidBrush(self.theme.green);
+                            let pen = CreatePen(PS_SOLID, 1, self.theme.green);
+                            let old_brush = SelectObject(hdc, brush);
+                            let old_pen = SelectObject(hdc, pen);
+                            let points = [
+                                POINT {
+                                    x: left + self.scale(9),
+                                    y: chrome_top + self.scale(11),
+                                },
+                                POINT {
+                                    x: left + self.scale(9),
+                                    y: chrome_top + self.scale(27),
+                                },
+                                POINT {
+                                    x: left + self.scale(23),
+                                    y: chrome_top + self.scale(19),
+                                },
+                            ];
+                            Polygon(hdc, points.as_ptr(), 3);
+                            SelectObject(hdc, old_brush);
+                            SelectObject(hdc, old_pen);
+                            DeleteObject(brush);
+                            DeleteObject(pen);
+                        }
                     }
                 }
             }
@@ -712,7 +745,7 @@ impl App {
             // Persistent command center: a compact, clickable Ctrl+P surface
             // matching the approved workbench mockup.
             let command_rect = self.command_center_rect(hwnd);
-            if command_rect.right > command_rect.left {
+            if command_rect.right > command_rect.left && shows(command_rect) {
                 self.panel_card(
                     hdc,
                     command_rect,
@@ -756,343 +789,212 @@ impl App {
                     key_rect,
                 );
             }
-            let rail_state = SaveDC(hdc);
-            SetViewportOrgEx(hdc, 0, chrome_top, null_mut());
-            self.paint_rail(hdc, editor_bottom - chrome_top);
-            RestoreDC(hdc, rail_state);
-            let sidebar_state = SaveDC(hdc);
-            // Clip the side panel to its card so its contents cannot spill
-            // into the gap between the cards.
-            IntersectClipRect(
-                hdc,
-                self.scale(RAIL) + gap,
-                chrome_top,
-                self.sidebar_right(),
-                card_bottom,
-            );
-            SetViewportOrgEx(hdc, 0, chrome_top, null_mut());
-            let sidebar_bottom = card_bottom - chrome_top;
-            if self.sidebar_width > 0 && self.side_view != SideView::Files {
-                self.paint_side_panel(hdc, self.sidebar_right(), sidebar_bottom);
+            if shows(RECT {
+                left: 0,
+                top: chrome_top,
+                right: self.scale(RAIL),
+                bottom: editor_bottom,
+            }) {
+                let rail_state = SaveDC(hdc);
+                SetViewportOrgEx(hdc, 0, chrome_top, null_mut());
+                self.paint_rail(hdc, editor_bottom - chrome_top);
+                RestoreDC(hdc, rail_state);
             }
-            if self.sidebar_width > 0 && self.side_view == SideView::Files {
-                if let Some(root) = self.workspace_root.clone()
-                    && !self.directory_cache.contains_key(&root)
-                {
-                    self.load_directory(&root);
+            if shows(RECT {
+                left: self.scale(RAIL) + gap,
+                top: chrome_top,
+                right: self.sidebar_right(),
+                bottom: card_bottom,
+            }) {
+                let sidebar_state = SaveDC(hdc);
+                // Clip the side panel to its card so its contents cannot spill
+                // into the gap between the cards.
+                IntersectClipRect(
+                    hdc,
+                    self.scale(RAIL) + gap,
+                    chrome_top,
+                    self.sidebar_right(),
+                    card_bottom,
+                );
+                SetViewportOrgEx(hdc, 0, chrome_top, null_mut());
+                let sidebar_bottom = card_bottom - chrome_top;
+                if self.sidebar_width > 0 && self.side_view != SideView::Files {
+                    self.paint_side_panel(hdc, self.sidebar_right(), sidebar_bottom);
                 }
-                let sidebar_clip = RECT {
-                    left: self.scale(RAIL),
-                    top: 0,
-                    right: editor_left,
-                    bottom: sidebar_bottom,
-                };
-                Self::label(
-                    hdc,
-                    "EXPLORER",
-                    self.scale(RAIL + 16),
-                    self.scale(11),
-                    self.theme.muted,
-                    sidebar_clip,
-                );
-                // Collapse all subfolders icon at top right
-                let collapse_all_rect = RECT {
-                    left: editor_left - self.scale(48),
-                    top: self.scale(10),
-                    right: editor_left - self.scale(28),
-                    bottom: self.scale(30),
-                };
-                self.draw_collapse_all_icon(hdc, collapse_all_rect, self.theme.muted);
-                // Collapse sidebar button at top right
-                let collapse_rect = RECT {
-                    left: editor_left - self.scale(26),
-                    top: self.scale(10),
-                    right: editor_left - self.scale(6),
-                    bottom: self.scale(30),
-                };
-                self.draw_close_icon(hdc, collapse_rect, self.theme.muted);
-                Self::fill(
-                    hdc,
-                    RECT {
+                if self.sidebar_width > 0 && self.side_view == SideView::Files {
+                    if let Some(root) = self.workspace_root.clone()
+                        && !self.directory_cache.contains_key(&root)
+                    {
+                        self.load_directory(&root);
+                    }
+                    let sidebar_clip = RECT {
                         left: self.scale(RAIL),
-                        top: self.scale(39),
+                        top: 0,
                         right: editor_left,
-                        bottom: self.scale(40),
-                    },
-                    self.theme.edge,
-                );
-                if let Some(root) = &self.workspace_root {
-                    let root_name = root
-                        .file_name()
-                        .map(|name| name.to_string_lossy().into_owned())
-                        .unwrap_or_else(|| display_path(root));
-                    let root_expanded = self.expanded_dirs.contains(root);
-                    self.chevron(hdc, self.scale(RAIL + 16), self.scale(58), root_expanded);
-                    let root_clip = RECT {
-                        left: self.scale(RAIL + 28),
-                        top: self.scale(40),
-                        right: editor_left - self.scale(96),
-                        bottom: self.scale(70),
+                        bottom: sidebar_bottom,
                     };
                     Self::label(
                         hdc,
-                        &root_name,
-                        self.scale(RAIL + 28),
-                        self.scale(49),
-                        self.theme.text,
-                        root_clip,
+                        "EXPLORER",
+                        self.scale(RAIL + 16),
+                        self.scale(11),
+                        self.theme.muted,
+                        sidebar_clip,
                     );
-                    // Toolbar action buttons on the workspace header
-                    let s = |v: i32| self.scale(v);
-                    let btn_y = s(48);
-                    let btn_h = s(20);
-
-                    // New File button
-                    let rect_file = RECT {
-                        left: editor_left - s(92),
-                        top: btn_y,
-                        right: editor_left - s(72),
-                        bottom: btn_y + btn_h,
+                    // Collapse all subfolders icon at top right
+                    let collapse_all_rect = RECT {
+                        left: editor_left - self.scale(48),
+                        top: self.scale(10),
+                        right: editor_left - self.scale(28),
+                        bottom: self.scale(30),
                     };
-                    self.draw_new_file_icon(hdc, rect_file, self.theme.muted);
-
-                    // New Folder button
-                    let rect_folder = RECT {
-                        left: editor_left - s(70),
-                        top: btn_y,
-                        right: editor_left - s(50),
-                        bottom: btn_y + btn_h,
+                    self.draw_collapse_all_icon(hdc, collapse_all_rect, self.theme.muted);
+                    // Collapse sidebar button at top right
+                    let collapse_rect = RECT {
+                        left: editor_left - self.scale(26),
+                        top: self.scale(10),
+                        right: editor_left - self.scale(6),
+                        bottom: self.scale(30),
                     };
-                    self.draw_new_folder_icon(hdc, rect_folder, self.theme.muted);
-
-                    // Refresh button
-                    let rect_refresh = RECT {
-                        left: editor_left - s(48),
-                        top: btn_y,
-                        right: editor_left - s(28),
-                        bottom: btn_y + btn_h,
-                    };
-                    self.draw_refresh_icon(hdc, rect_refresh, self.theme.muted);
-
-                    // Close Workspace button
-                    let rect_close = RECT {
-                        left: editor_left - s(26),
-                        top: btn_y,
-                        right: editor_left - s(6),
-                        bottom: btn_y + btn_h,
-                    };
-                    self.draw_close_icon(hdc, rect_close, self.theme.muted);
-
-                    let input_is_new = self
-                        .explorer_input
-                        .as_ref()
-                        .is_some_and(|inp| !inp.is_rename);
-                    if let Some(input) = &self.explorer_input
-                        && !input.is_rename
-                    {
-                        let top = self.scale(EXPLORER_TOP);
-                        let input_rect = RECT {
-                            left: self.scale(RAIL + 20),
-                            top,
-                            right: editor_left - self.scale(8),
-                            bottom: top + self.scale(EXPLORER_ROW - 2),
+                    self.draw_close_icon(hdc, collapse_rect, self.theme.muted);
+                    Self::fill(
+                        hdc,
+                        RECT {
+                            left: self.scale(RAIL),
+                            top: self.scale(39),
+                            right: editor_left,
+                            bottom: self.scale(40),
+                        },
+                        self.theme.edge,
+                    );
+                    if let Some(root) = &self.workspace_root {
+                        let root_name = root
+                            .file_name()
+                            .map(|name| name.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| display_path(root));
+                        let root_expanded = self.expanded_dirs.contains(root);
+                        self.chevron(hdc, self.scale(RAIL + 16), self.scale(58), root_expanded);
+                        let root_clip = RECT {
+                            left: self.scale(RAIL + 28),
+                            top: self.scale(40),
+                            right: editor_left - self.scale(96),
+                            bottom: self.scale(70),
                         };
-                        self.panel_card(
-                            hdc,
-                            input_rect,
-                            self.scale(4),
-                            self.theme.blue,
-                            ui(16, 26, 48),
-                        );
-                        if input.is_folder {
-                            if !self.icons.draw_generic(
-                                hdc,
-                                GenericIcon::FolderOpen,
-                                self.scale(RAIL + 25),
-                                top + self.scale(2),
-                                self.scale(18),
-                            ) {
-                                self.draw_vector_folder(
-                                    hdc,
-                                    self.scale(RAIL + 25),
-                                    top + self.scale(2),
-                                    self.scale(18),
-                                    true,
-                                );
-                            }
-                        } else {
-                            if !self.icons.draw_generic(
-                                hdc,
-                                GenericIcon::File,
-                                self.scale(RAIL + 25),
-                                top + self.scale(2),
-                                self.scale(18),
-                            ) {
-                                self.draw_vector_file(
-                                    hdc,
-                                    std::path::Path::new(&input.buffer),
-                                    self.scale(RAIL + 25),
-                                    top + self.scale(2),
-                                    self.scale(18),
-                                );
-                            }
-                        }
-                        let text_x = self.scale(RAIL + 49);
                         Self::label(
                             hdc,
-                            &input.buffer,
-                            text_x,
-                            top + self.scale(1),
+                            &root_name,
+                            self.scale(RAIL + 28),
+                            self.scale(49),
                             self.theme.text,
-                            input_rect,
+                            root_clip,
                         );
-                        let text_w = self.text_width(hdc, &input.buffer);
-                        let caret_x = text_x + text_w;
-                        if caret_x < input_rect.right - self.scale(4) {
-                            Self::fill(
-                                hdc,
-                                RECT {
-                                    left: caret_x,
-                                    top: top + self.scale(3),
-                                    right: caret_x + self.scale(2),
-                                    bottom: top + self.scale(EXPLORER_ROW - 5),
-                                },
-                                self.theme.text,
-                            );
-                        }
-                    }
+                        // Toolbar action buttons on the workspace header
+                        let s = |v: i32| self.scale(v);
+                        let btn_y = s(48);
+                        let btn_h = s(20);
 
-                    let row_offset = if input_is_new { 1 } else { 0 };
+                        // New File button
+                        let rect_file = RECT {
+                            left: editor_left - s(92),
+                            top: btn_y,
+                            right: editor_left - s(72),
+                            bottom: btn_y + btn_h,
+                        };
+                        self.draw_new_file_icon(hdc, rect_file, self.theme.muted);
 
-                    for (row, item) in self
-                        .explorer_rows()
-                        .iter()
-                        .enumerate()
-                        .skip(self.explorer_first_row)
-                    {
-                        let top = self.scale(
-                            EXPLORER_TOP
-                                + (row + row_offset - self.explorer_first_row) as i32
-                                    * EXPLORER_ROW,
-                        );
-                        if top >= sidebar_bottom - self.scale(38) {
-                            break;
-                        }
-                        let is_being_renamed = self.explorer_input.as_ref().is_some_and(|inp| {
-                            inp.is_rename && inp.old_path.as_deref() == Some(&item.entry.path)
-                        });
-                        let selected = self.selected_explorer_path.as_deref()
-                            == Some(&item.entry.path)
-                            || self
-                                .doc()
-                                .path
-                                .as_deref()
-                                .is_some_and(|path| path == item.entry.path);
-                        if selected || is_being_renamed {
-                            let sel_rect = RECT {
-                                left: self.scale(RAIL + 7),
+                        // New Folder button
+                        let rect_folder = RECT {
+                            left: editor_left - s(70),
+                            top: btn_y,
+                            right: editor_left - s(50),
+                            bottom: btn_y + btn_h,
+                        };
+                        self.draw_new_folder_icon(hdc, rect_folder, self.theme.muted);
+
+                        // Refresh button
+                        let rect_refresh = RECT {
+                            left: editor_left - s(48),
+                            top: btn_y,
+                            right: editor_left - s(28),
+                            bottom: btn_y + btn_h,
+                        };
+                        self.draw_refresh_icon(hdc, rect_refresh, self.theme.muted);
+
+                        // Close Workspace button
+                        let rect_close = RECT {
+                            left: editor_left - s(26),
+                            top: btn_y,
+                            right: editor_left - s(6),
+                            bottom: btn_y + btn_h,
+                        };
+                        self.draw_close_icon(hdc, rect_close, self.theme.muted);
+
+                        let input_is_new = self
+                            .explorer_input
+                            .as_ref()
+                            .is_some_and(|inp| !inp.is_rename);
+                        if let Some(input) = &self.explorer_input
+                            && !input.is_rename
+                        {
+                            let top = self.scale(EXPLORER_TOP);
+                            let input_rect = RECT {
+                                left: self.scale(RAIL + 20),
                                 top,
                                 right: editor_left - self.scale(8),
                                 bottom: top + self.scale(EXPLORER_ROW - 2),
                             };
                             self.panel_card(
                                 hdc,
-                                sel_rect,
-                                self.scale(6),
-                                if is_being_renamed {
-                                    self.theme.blue
-                                } else {
-                                    ui(48, 84, 156)
-                                },
-                                if is_being_renamed {
-                                    ui(16, 26, 48)
-                                } else {
-                                    ui(26, 44, 90)
-                                },
+                                input_rect,
+                                self.scale(4),
+                                self.theme.blue,
+                                ui(16, 26, 48),
                             );
-                        }
-                        let name = item
-                            .entry
-                            .path
-                            .file_name()
-                            .unwrap_or_default()
-                            .to_string_lossy();
-                        // Draw subtle vertical indent guidelines for nested levels
-                        for d in 0..item.depth.min(6) {
-                            let guide_x = self.scale(RAIL + 23 + d as i32 * 14 + 5);
-                            Self::fill(
-                                hdc,
-                                RECT {
-                                    left: guide_x,
-                                    top,
-                                    right: guide_x + 1.max(self.scale(1)),
-                                    bottom: top + self.scale(EXPLORER_ROW),
-                                },
-                                ui(38, 52, 78),
-                            );
-                        }
-
-                        let left = self.scale(RAIL + 23 + item.depth.min(6) as i32 * 14);
-                        if item.entry.is_dir {
-                            self.chevron(
-                                hdc,
-                                left + self.scale(5),
-                                top + self.scale(EXPLORER_ROW / 2),
-                                item.expanded,
-                            );
-                        }
-                        if !self.icons.draw_for_path(
-                            hdc,
-                            &item.entry.path,
-                            item.entry.is_dir,
-                            item.expanded,
-                            self.has_extension("material-icons"),
-                            left + self.scale(12),
-                            top + self.scale(2),
-                            self.scale(18),
-                        ) {
-                            if item.entry.is_dir {
-                                self.draw_vector_folder(
+                            if input.is_folder {
+                                if !self.icons.draw_generic(
                                     hdc,
-                                    left + self.scale(12),
+                                    GenericIcon::FolderOpen,
+                                    self.scale(RAIL + 25),
                                     top + self.scale(2),
                                     self.scale(18),
-                                    item.expanded,
-                                );
+                                ) {
+                                    self.draw_vector_folder(
+                                        hdc,
+                                        self.scale(RAIL + 25),
+                                        top + self.scale(2),
+                                        self.scale(18),
+                                        true,
+                                    );
+                                }
                             } else {
-                                self.draw_vector_file(
+                                if !self.icons.draw_generic(
                                     hdc,
-                                    &item.entry.path,
-                                    left + self.scale(12),
+                                    GenericIcon::File,
+                                    self.scale(RAIL + 25),
                                     top + self.scale(2),
                                     self.scale(18),
-                                );
+                                ) {
+                                    self.draw_vector_file(
+                                        hdc,
+                                        std::path::Path::new(&input.buffer),
+                                        self.scale(RAIL + 25),
+                                        top + self.scale(2),
+                                        self.scale(18),
+                                    );
+                                }
                             }
-                        }
-                        if is_being_renamed {
-                            let input_buf = self
-                                .explorer_input
-                                .as_ref()
-                                .map(|i| i.buffer.as_str())
-                                .unwrap_or("");
-                            let text_x = left + self.scale(36);
-                            let text_clip = RECT {
-                                left: text_x,
-                                top,
-                                right: editor_left - self.scale(10),
-                                bottom: top + self.scale(EXPLORER_ROW),
-                            };
+                            let text_x = self.scale(RAIL + 49);
                             Self::label(
                                 hdc,
-                                input_buf,
+                                &input.buffer,
                                 text_x,
                                 top + self.scale(1),
                                 self.theme.text,
-                                text_clip,
+                                input_rect,
                             );
-                            let text_w = self.text_width(hdc, input_buf);
+                            let text_w = self.text_width(hdc, &input.buffer);
                             let caret_x = text_x + text_w;
-                            if caret_x < text_clip.right {
+                            if caret_x < input_rect.right - self.scale(4) {
                                 Self::fill(
                                     hdc,
                                     RECT {
@@ -1104,48 +1006,195 @@ impl App {
                                     self.theme.text,
                                 );
                             }
-                        } else {
-                            Self::label(
+                        }
+
+                        let row_offset = if input_is_new { 1 } else { 0 };
+
+                        for (row, item) in self
+                            .explorer_rows()
+                            .iter()
+                            .enumerate()
+                            .skip(self.explorer_first_row)
+                        {
+                            let top = self.scale(
+                                EXPLORER_TOP
+                                    + (row + row_offset - self.explorer_first_row) as i32
+                                        * EXPLORER_ROW,
+                            );
+                            if top >= sidebar_bottom - self.scale(38) {
+                                break;
+                            }
+                            let is_being_renamed =
+                                self.explorer_input.as_ref().is_some_and(|inp| {
+                                    inp.is_rename
+                                        && inp.old_path.as_deref() == Some(&item.entry.path)
+                                });
+                            let selected = self.selected_explorer_path.as_deref()
+                                == Some(&item.entry.path)
+                                || self
+                                    .doc()
+                                    .path
+                                    .as_deref()
+                                    .is_some_and(|path| path == item.entry.path);
+                            if selected || is_being_renamed {
+                                let sel_rect = RECT {
+                                    left: self.scale(RAIL + 7),
+                                    top,
+                                    right: editor_left - self.scale(8),
+                                    bottom: top + self.scale(EXPLORER_ROW - 2),
+                                };
+                                self.panel_card(
+                                    hdc,
+                                    sel_rect,
+                                    self.scale(6),
+                                    if is_being_renamed {
+                                        self.theme.blue
+                                    } else {
+                                        ui(48, 84, 156)
+                                    },
+                                    if is_being_renamed {
+                                        ui(16, 26, 48)
+                                    } else {
+                                        ui(26, 44, 90)
+                                    },
+                                );
+                            }
+                            let name = item
+                                .entry
+                                .path
+                                .file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy();
+                            // Draw subtle vertical indent guidelines for nested levels
+                            for d in 0..item.depth.min(6) {
+                                let guide_x = self.scale(RAIL + 23 + d as i32 * 14 + 5);
+                                Self::fill(
+                                    hdc,
+                                    RECT {
+                                        left: guide_x,
+                                        top,
+                                        right: guide_x + 1.max(self.scale(1)),
+                                        bottom: top + self.scale(EXPLORER_ROW),
+                                    },
+                                    ui(38, 52, 78),
+                                );
+                            }
+
+                            let left = self.scale(RAIL + 23 + item.depth.min(6) as i32 * 14);
+                            if item.entry.is_dir {
+                                self.chevron(
+                                    hdc,
+                                    left + self.scale(5),
+                                    top + self.scale(EXPLORER_ROW / 2),
+                                    item.expanded,
+                                );
+                            }
+                            if !self.icons.draw_for_path(
                                 hdc,
-                                &name,
-                                left + self.scale(36),
-                                top + self.scale(1),
-                                if selected {
-                                    self.theme.text
-                                } else if item.entry.is_dir {
-                                    self.theme.muted
+                                &item.entry.path,
+                                item.entry.is_dir,
+                                item.expanded,
+                                self.has_extension("material-icons"),
+                                left + self.scale(12),
+                                top + self.scale(2),
+                                self.scale(18),
+                            ) {
+                                if item.entry.is_dir {
+                                    self.draw_vector_folder(
+                                        hdc,
+                                        left + self.scale(12),
+                                        top + self.scale(2),
+                                        self.scale(18),
+                                        item.expanded,
+                                    );
                                 } else {
-                                    ui(185, 205, 230)
-                                },
-                                RECT {
-                                    left: left + self.scale(36),
+                                    self.draw_vector_file(
+                                        hdc,
+                                        &item.entry.path,
+                                        left + self.scale(12),
+                                        top + self.scale(2),
+                                        self.scale(18),
+                                    );
+                                }
+                            }
+                            if is_being_renamed {
+                                let input_buf = self
+                                    .explorer_input
+                                    .as_ref()
+                                    .map(|i| i.buffer.as_str())
+                                    .unwrap_or("");
+                                let text_x = left + self.scale(36);
+                                let text_clip = RECT {
+                                    left: text_x,
                                     top,
                                     right: editor_left - self.scale(10),
                                     bottom: top + self.scale(EXPLORER_ROW),
-                                },
-                            );
+                                };
+                                Self::label(
+                                    hdc,
+                                    input_buf,
+                                    text_x,
+                                    top + self.scale(1),
+                                    self.theme.text,
+                                    text_clip,
+                                );
+                                let text_w = self.text_width(hdc, input_buf);
+                                let caret_x = text_x + text_w;
+                                if caret_x < text_clip.right {
+                                    Self::fill(
+                                        hdc,
+                                        RECT {
+                                            left: caret_x,
+                                            top: top + self.scale(3),
+                                            right: caret_x + self.scale(2),
+                                            bottom: top + self.scale(EXPLORER_ROW - 5),
+                                        },
+                                        self.theme.text,
+                                    );
+                                }
+                            } else {
+                                Self::label(
+                                    hdc,
+                                    &name,
+                                    left + self.scale(36),
+                                    top + self.scale(1),
+                                    if selected {
+                                        self.theme.text
+                                    } else if item.entry.is_dir {
+                                        self.theme.muted
+                                    } else {
+                                        ui(185, 205, 230)
+                                    },
+                                    RECT {
+                                        left: left + self.scale(36),
+                                        top,
+                                        right: editor_left - self.scale(10),
+                                        bottom: top + self.scale(EXPLORER_ROW),
+                                    },
+                                );
+                            }
                         }
+                    } else {
+                        Self::label(
+                            hdc,
+                            "Open a file to browse",
+                            self.scale(RAIL + 16),
+                            self.scale(49),
+                            self.theme.muted,
+                            sidebar_clip,
+                        );
+                        Self::label(
+                            hdc,
+                            "its folder  (Ctrl+O)",
+                            self.scale(RAIL + 16),
+                            self.scale(73),
+                            self.theme.muted,
+                            sidebar_clip,
+                        );
                     }
-                } else {
-                    Self::label(
-                        hdc,
-                        "Open a file to browse",
-                        self.scale(RAIL + 16),
-                        self.scale(49),
-                        self.theme.muted,
-                        sidebar_clip,
-                    );
-                    Self::label(
-                        hdc,
-                        "its folder  (Ctrl+O)",
-                        self.scale(RAIL + 16),
-                        self.scale(73),
-                        self.theme.muted,
-                        sidebar_clip,
-                    );
                 }
+                RestoreDC(hdc, sidebar_state);
             }
-            RestoreDC(hdc, sidebar_state);
             if self.side_view == SideView::Review && self.review_file.is_some() {
                 self.paint_diff(hdc, editor_left, editor_card.right, code_bottom);
             } else {
@@ -1197,7 +1246,14 @@ impl App {
                 self.pane_right(hwnd, self.focused_pane),
                 code_bottom,
             );
-            if self.terminal_visible {
+            if self.terminal_visible
+                && shows(RECT {
+                    left: editor_left,
+                    top: code_bottom,
+                    right: editor_card.right,
+                    bottom: card_bottom,
+                })
+            {
                 self.paint_terminal(hdc, editor_left, editor_card.right, card_bottom);
             }
             // Card borders go on last: the interior fills above are square, so
@@ -1224,8 +1280,10 @@ impl App {
                     right: rect.right - gap,
                     bottom: card_bottom,
                 };
-                self.paint_ai_assistant(hdc, ai_card);
-                self.card_outline(hdc, ai_card, card_radius, self.theme.card_edge);
+                if shows(ai_card) {
+                    self.paint_ai_assistant(hdc, ai_card);
+                    self.card_outline(hdc, ai_card, card_radius, self.theme.card_edge);
+                }
             }
             FillRect(
                 hdc,
@@ -1248,129 +1306,136 @@ impl App {
                 self.theme.edge,
             );
             SelectObject(hdc, self.ui_font);
-
-            // Durable repository health stays on the left; editor-specific
-            // details sit on the right beside the Ready indicator.
-            let branch = self.git_head_label();
-            let left_branch = format!("\u{2442}  {branch}");
-            let left_x = self.scale(16);
-            Self::label(
-                hdc,
-                &left_branch,
-                left_x,
-                editor_bottom + self.scale(5),
-                self.theme.text,
-                rect,
-            );
-            let health_x = left_x + self.text_width(hdc, &left_branch) + self.scale(24);
-            let (errors, warnings) = self.problem_counts();
-            let health = format!("⊗ {errors}    ⚠ {warnings}");
-            Self::label(
-                hdc,
-                &health,
-                health_x,
-                editor_bottom + self.scale(5),
-                self.theme.muted,
-                rect,
-            );
-            let left_info_right = health_x + self.text_width(hdc, &health);
-
-            let right_ready = "\u{25cf}  Ready";
-            let ready_width = self.text_width(hdc, right_ready);
-            let ready_x = rect.right - ready_width - self.scale(16);
-            Self::label(
-                hdc,
-                "\u{25cf}",
-                ready_x,
-                editor_bottom + self.scale(5),
-                ui(52, 211, 153),
-                rect,
-            );
-            Self::label(
-                hdc,
-                "Ready",
-                ready_x + self.scale(14),
-                editor_bottom + self.scale(5),
-                self.theme.text,
-                rect,
-            );
-
-            // Middle info: Ln, Col, Spaces, Encoding, Language. The language
-            // name is a real clickable control (see status_language_control),
-            // so it's drawn in the accent color used for other clickable
-            // labels instead of blending into the plain muted text.
-            // With no file open there is no document to describe, so the
-            // status message may use the space up to the Ready indicator.
-            let mid_x = if self.tab().is_placeholder() || self.tab().markdown.is_some() {
-                ready_x
-            } else {
-                let (mid_x, clip_right, prefix, language_rect) = self.status_language_control(
-                    hdc,
-                    rect,
-                    editor_bottom,
-                    left_info_right,
-                    ready_x,
-                );
-                let label_clip = RECT {
-                    left: mid_x,
-                    top: editor_bottom,
-                    right: clip_right,
-                    bottom: rect.bottom,
-                };
+            // The status bar's contents; its background is filled above.
+            if shows(RECT {
+                left: 0,
+                top: editor_bottom,
+                right: rect.right,
+                bottom: rect.bottom,
+            }) {
+                // Durable repository health stays on the left; editor-specific
+                // details sit on the right beside the Ready indicator.
+                let branch = self.git_head_label();
+                let left_branch = format!("\u{2442}  {branch}");
+                let left_x = self.scale(16);
                 Self::label(
                     hdc,
-                    &prefix,
-                    mid_x,
+                    &left_branch,
+                    left_x,
+                    editor_bottom + self.scale(5),
+                    self.theme.text,
+                    rect,
+                );
+                let health_x = left_x + self.text_width(hdc, &left_branch) + self.scale(24);
+                let (errors, warnings) = self.problem_counts();
+                let health = format!("⊗ {errors}    ⚠ {warnings}");
+                Self::label(
+                    hdc,
+                    &health,
+                    health_x,
                     editor_bottom + self.scale(5),
                     self.theme.muted,
-                    label_clip,
+                    rect,
                 );
-                let language = language_label(self.doc().path.as_deref());
+                let left_info_right = health_x + self.text_width(hdc, &health);
+
+                let right_ready = "\u{25cf}  Ready";
+                let ready_width = self.text_width(hdc, right_ready);
+                let ready_x = rect.right - ready_width - self.scale(16);
                 Self::label(
                     hdc,
-                    &language,
-                    language_rect.left,
+                    "\u{25cf}",
+                    ready_x,
                     editor_bottom + self.scale(5),
-                    ui(80, 160, 220),
-                    label_clip,
+                    ui(52, 211, 153),
+                    rect,
                 );
-                mid_x
-            };
-            // What the last action reported ("Formatted with ...", "WSL is not
-            // available ..."), shown for a few seconds in the free space
-            // between the problem counts and the cursor info.
-            if let Some(message) = self.fresh_status() {
-                let left = left_info_right + self.scale(24);
-                let right = mid_x - self.scale(16);
-                if right > left + self.scale(40) {
-                    let lower = message.to_ascii_lowercase();
-                    let failed = [
-                        "fail",
-                        "error",
-                        "not available",
-                        "could not",
-                        "skipped",
-                        "invalid",
-                    ]
-                    .iter()
-                    .any(|word| lower.contains(word));
+                Self::label(
+                    hdc,
+                    "Ready",
+                    ready_x + self.scale(14),
+                    editor_bottom + self.scale(5),
+                    self.theme.text,
+                    rect,
+                );
+
+                // Middle info: Ln, Col, Spaces, Encoding, Language. The language
+                // name is a real clickable control (see status_language_control),
+                // so it's drawn in the accent color used for other clickable
+                // labels instead of blending into the plain muted text.
+                // With no file open there is no document to describe, so the
+                // status message may use the space up to the Ready indicator.
+                let mid_x = if self.tab().is_placeholder() || self.tab().markdown.is_some() {
+                    ready_x
+                } else {
+                    let (mid_x, clip_right, prefix, language_rect) = self.status_language_control(
+                        hdc,
+                        rect,
+                        editor_bottom,
+                        left_info_right,
+                        ready_x,
+                    );
+                    let label_clip = RECT {
+                        left: mid_x,
+                        top: editor_bottom,
+                        right: clip_right,
+                        bottom: rect.bottom,
+                    };
                     Self::label(
                         hdc,
-                        message,
-                        left,
+                        &prefix,
+                        mid_x,
                         editor_bottom + self.scale(5),
-                        if failed {
-                            self.theme.error
-                        } else {
-                            self.theme.muted
-                        },
-                        RECT {
-                            left,
-                            top: editor_bottom,
-                            right,
-                            bottom: rect.bottom,
-                        },
+                        self.theme.muted,
+                        label_clip,
                     );
+                    let language = language_label(self.doc().path.as_deref());
+                    Self::label(
+                        hdc,
+                        &language,
+                        language_rect.left,
+                        editor_bottom + self.scale(5),
+                        ui(80, 160, 220),
+                        label_clip,
+                    );
+                    mid_x
+                };
+                // What the last action reported ("Formatted with ...", "WSL is not
+                // available ..."), shown for a few seconds in the free space
+                // between the problem counts and the cursor info.
+                if let Some(message) = self.fresh_status() {
+                    let left = left_info_right + self.scale(24);
+                    let right = mid_x - self.scale(16);
+                    if right > left + self.scale(40) {
+                        let lower = message.to_ascii_lowercase();
+                        let failed = [
+                            "fail",
+                            "error",
+                            "not available",
+                            "could not",
+                            "skipped",
+                            "invalid",
+                        ]
+                        .iter()
+                        .any(|word| lower.contains(word));
+                        Self::label(
+                            hdc,
+                            message,
+                            left,
+                            editor_bottom + self.scale(5),
+                            if failed {
+                                self.theme.error
+                            } else {
+                                self.theme.muted
+                            },
+                            RECT {
+                                left,
+                                top: editor_bottom,
+                                right,
+                                bottom: rect.bottom,
+                            },
+                        );
+                    }
                 }
             }
             DeleteObject(bg);

@@ -197,6 +197,80 @@ impl App {
         }
     }
 
+    /// The code panes, and with `with_tabs` the tab strip and breadcrumbs
+    /// above them; never a terminal below them.
+    pub(in crate::windows_app) fn editor_area(&self, hwnd: HWND, with_tabs: bool) -> RECT {
+        let mut client = RECT::default();
+        unsafe { GetClientRect(hwnd, &mut client) };
+        let editor_bottom = (client.bottom - self.scale(STATUS)).max(0);
+        let terminal = if self.terminal_visible {
+            self.scale(self.terminal_height)
+        } else {
+            0
+        };
+        RECT {
+            left: self.editor_left(),
+            top: if with_tabs {
+                self.chrome_top()
+            } else {
+                self.editor_top()
+            },
+            right: self.editor_right(hwnd),
+            bottom: editor_bottom - terminal,
+        }
+    }
+
+    pub(in crate::windows_app) fn status_area(&self, hwnd: HWND) -> RECT {
+        let mut client = RECT::default();
+        unsafe { GetClientRect(hwnd, &mut client) };
+        RECT {
+            top: client.bottom - self.scale(STATUS),
+            ..client
+        }
+    }
+
+    /// Whether a keystroke in the editor changes nothing outside the editor
+    /// and the status bar. An open popup, hover card or menu can reach past
+    /// them, and the assistant panel describes the selection.
+    pub(in crate::windows_app) fn keystroke_stays_in_editor(&self) -> bool {
+        !self.welcome
+            && self.hover_card.is_none()
+            && self.completion.is_none()
+            && self.editor_context.is_none()
+            && self.more_menu.is_none()
+            && !self.ai_assistant_visible
+    }
+
+    /// Runs `update`, which asks for the whole window to be redrawn, and
+    /// narrows that to `areas`: typing only changes the editor and the status
+    /// bar, but each keystroke redrew everything, 5–9 ms a time. Whatever was
+    /// already waiting to be redrawn stays waiting.
+    pub(in crate::windows_app) fn repaint_only(
+        &mut self,
+        hwnd: HWND,
+        areas: &[RECT],
+        update: impl FnOnce(&mut Self),
+    ) {
+        unsafe {
+            let pending = CreateRectRgn(0, 0, 0, 0);
+            if pending.is_null() {
+                // Without somewhere to keep what's waiting, don't narrow.
+                update(self);
+                return;
+            }
+            let had_pending = GetUpdateRgn(hwnd, pending, 0) > NULLREGION;
+            update(self);
+            ValidateRect(hwnd, null());
+            if had_pending {
+                InvalidateRgn(hwnd, pending, 0);
+            }
+            DeleteObject(pending);
+            for area in areas {
+                InvalidateRect(hwnd, area, 0);
+            }
+        }
+    }
+
     /// Redraws what a caret blink changes. Usually that's just the editor's
     /// caret; when a text box elsewhere has the caret (Quick Open, the
     /// terminal, a search box or the commit message), the whole window is

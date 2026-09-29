@@ -39,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Changed
 - **Idle Terminals Use No CPU**: An open terminal woke its background threads about 100 times a second to check for work, even with nothing happening. They now sleep until there is output, input, a resize or a stop. An idle shell went from about 100 wakeups and 47 ms of CPU every 10 seconds to none.
+- **Faster Typing**: Each keystroke redrew the whole window about three times (for the key itself, the new syntax colors and the changed-line marks), about 17–19 ms of drawing per key. Now the key redraws only the editor and the status bar, the colors and marks only the code, and marks that didn't change not at all: about 8–9 ms per key.
 - **Cheaper Caret Blink**: Each blink of the editor caret redrew the whole window, twice a second while you were just reading. It now redraws only the code under the caret, about 1.4 ms instead of 8.5–9 ms per blink.
 - **Idle Language Servers Use No CPU**: With a Rust or Python file open, the thread talking to rust-analyzer or Pyright woke about 30 times a second to check for work. It now sleeps until the editor or the server has something for it. With a Python file open and nothing happening, LightLine went from about 40 wakeups a second to 2–5.
 - **No Terminal at Startup**: LightLine no longer starts a PowerShell session on every launch. Startup is faster, the Welcome screen shows again, and the editor keeps keyboard focus. `` Ctrl+` `` starts the first terminal when you need it.

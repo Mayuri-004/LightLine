@@ -717,6 +717,8 @@ impl App {
                 _ => self.dismiss_completion(hwnd),
             }
         }
+        // Checked before the key acts: Backspace and Delete clear a hover card.
+        let stays_in_editor = self.keystroke_stays_in_editor();
         match key {
             x if x == VK_F1 as u32 => {
                 self.hover_at_cursor(hwnd);
@@ -847,8 +849,19 @@ impl App {
             }
             _ => return false,
         }
-        self.refresh(hwnd);
+        self.refresh_after_keystroke(hwnd, stays_in_editor);
         true
+    }
+
+    // After a key moved the caret or edited text: redraws the editor and the
+    // status bar, or everything when something outside them may have changed.
+    fn refresh_after_keystroke(&mut self, hwnd: HWND, stays_in_editor: bool) {
+        if stays_in_editor {
+            let areas = [self.editor_area(hwnd, true), self.status_area(hwnd)];
+            self.repaint_only(hwnd, &areas, |app| app.refresh(hwnd));
+        } else {
+            self.refresh(hwnd);
+        }
     }
 
     pub(super) fn character(&mut self, hwnd: HWND, unit: u16) {
@@ -1040,6 +1053,8 @@ impl App {
             } else {
                 ch.to_string()
             };
+            // Checked before the edit, which clears a hover card.
+            let stays_in_editor = self.keystroke_stays_in_editor();
             self.cancel_transition(hwnd);
             self.replace_selection(&text);
             // For auto-close pairs, move the cursor back before the closing char.
@@ -1047,7 +1062,7 @@ impl App {
                 let pos = self.doc().previous(self.view().cursor);
                 self.view_mut().cursor = pos;
             }
-            self.refresh(hwnd);
+            self.refresh_after_keystroke(hwnd, stays_in_editor);
         }
     }
 

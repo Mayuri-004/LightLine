@@ -173,8 +173,10 @@ unsafe extern "system" fn wnd_proc(
         }
         WM_TIMER if wparam == 2 => {
             app.advance_syntax(hwnd);
+            // New colors only show in the code panes.
+            let panes = app.editor_area(hwnd, false);
             unsafe {
-                InvalidateRect(hwnd, null(), 0);
+                InvalidateRect(hwnd, &panes, 0);
             }
             0
         }
@@ -199,7 +201,20 @@ unsafe extern "system" fn wnd_proc(
             0
         }
         WM_TIMER if wparam == GUTTER_DIFF_TIMER => {
-            app.start_gutter_diff();
+            // Changed-line marks only show in the code panes' gutters, and
+            // outside git (or in an untracked file) they rarely change.
+            let marks = |app: &App| {
+                app.doc()
+                    .path
+                    .as_ref()
+                    .and_then(|path| app.git_diff_cache.get(path).cloned())
+            };
+            let before = marks(&app);
+            app.repaint_only(hwnd, &[], |app| app.start_gutter_diff());
+            if marks(&app) != before {
+                let panes = app.editor_area(hwnd, false);
+                unsafe { InvalidateRect(hwnd, &panes, 0) };
+            }
             0
         }
         WM_TIMER if wparam == MARKDOWN_TIMER => {

@@ -559,8 +559,12 @@ impl App {
 
     pub(super) fn poll_workers(&mut self, hwnd: HWND) {
         let mut received = false;
+        // Changed-line marks, recomputed after each keystroke in a git file,
+        // only show in the code panes' gutters.
+        let mut only_gutter = true;
         while let Ok(message) = self.worker_rx.try_recv() {
             received = true;
+            only_gutter &= matches!(message, WorkerMessage::GutterComputed(..));
             self.pending_workers = self.pending_workers.saturating_sub(1);
             match message {
                 WorkerMessage::Files(root, files)
@@ -763,7 +767,10 @@ impl App {
         if self.pending_workers == 0 {
             unsafe { KillTimer(hwnd, 4) };
         }
-        if received {
+        if received && only_gutter {
+            let panes = self.editor_area(hwnd, false);
+            unsafe { InvalidateRect(hwnd, &panes, 0) };
+        } else if received {
             unsafe { InvalidateRect(hwnd, null(), 0) };
         }
     }
