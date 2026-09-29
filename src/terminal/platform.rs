@@ -23,11 +23,12 @@ use windows_sys::Win32::System::JobObjects::{
 use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
 use windows_sys::Win32::System::Pipes::CreatePipe;
 use windows_sys::Win32::System::Threading::{
-    CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateProcessW, DeleteProcThreadAttributeList,
-    EXTENDED_STARTUPINFO_PRESENT, GetCurrentThreadId, GetExitCodeProcess, INFINITE,
-    InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST, OpenThread,
-    PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, PROCESS_INFORMATION, ResumeThread, STARTUPINFOEXW,
-    THREAD_TERMINATE, TerminateProcess, UpdateProcThreadAttribute, WaitForSingleObject,
+    CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateEventW, CreateProcessW,
+    DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT, GetCurrentThreadId,
+    GetExitCodeProcess, INFINITE, InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST,
+    OpenThread, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, PROCESS_INFORMATION, ResumeThread,
+    STARTUPINFOEXW, SetEvent, THREAD_TERMINATE, TerminateProcess, UpdateProcThreadAttribute,
+    WaitForMultipleObjects, WaitForSingleObject,
 };
 
 struct Handle(HANDLE);
@@ -48,6 +49,25 @@ impl Drop for Handle {
     fn drop(&mut self) {
         unsafe {
             CloseHandle(self.0);
+        }
+    }
+}
+
+/// An auto-reset event the session's lifecycle thread waits on, alongside
+/// the shell process, instead of waking every 10 ms to check for work.
+pub(super) struct Signal(Handle);
+// SetEvent may be called from any thread.
+unsafe impl Sync for Signal {}
+
+impl Signal {
+    pub(super) fn new() -> Option<Self> {
+        let raw = unsafe { CreateEventW(null(), 0, 0, null()) };
+        Handle::new(raw, "CreateEventW").ok().map(Self)
+    }
+
+    pub(super) fn set(&self) {
+        unsafe {
+            SetEvent(self.0.0);
         }
     }
 }
@@ -389,10 +409,12 @@ struct Runtime {
     process: Option<Process>,
     reader: Option<IoWorker>,
     writer: Option<IoWorker>,
+    // Wakes the writer, which waits for input, to see that it must stop.
+    writer_nudge: SyncSender<Vec<u8>>,
 }
 
 impl Runtime {
-    fn new(shared: Arc<Shared>) -> Self {
+    fn new(shared: Arc<Shared>, writer_nudge: SyncSender<Vec<u8>>) -> Self {
         Self {
             shared,
             console: None,
@@ -400,6 +422,7 @@ impl Runtime {
             process: None,
             reader: None,
             writer: None,
+            writer_nudge,
         }
     }
 }
@@ -420,6 +443,8 @@ impl Drop for Runtime {
             while !writer.finished() {
                 // Repeat to cover cancellation racing the next synchronous WriteFile.
                 writer.cancel();
+                // A writer waiting for input wakes, sees io_stop and returns.
+                let _ = self.writer_nudge.try_send(Vec::new());
                 thread::sleep(Duration::from_millis(5));
             }
             writer.join();
@@ -474,7 +499,10 @@ fn read_output(pipe: Handle, shared: Arc<Shared>, output: SyncSender<Vec<u8>>) {
         let mut bytes = buffer[..count as usize].to_vec();
         loop {
             match output.try_send(bytes) {
-                Ok(()) => break,
+                Ok(()) => {
+                    shared.bell.ring();
+                    break;
+                }
                 Err(TrySendError::Full(pending)) => {
                     if shared.reader_abort.load(Ordering::Acquire) {
                         return;
@@ -536,10 +564,12 @@ fn write_input(
                 Err(_) => break,
             }
         }
-        match input.recv_timeout(Duration::from_millis(8)) {
+        // Waits for input rather than waking every 8 ms. The parser sends an
+        // empty nudge when replies are queued, and teardown one to stop.
+        match input.recv() {
             Ok(bytes) if !write_bytes(&pipe, &shared, &bytes) => return,
-            Ok(_) | Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            Ok(_) => {}
+            Err(_) => break,
         }
     }
 }
@@ -549,10 +579,19 @@ pub(super) fn run(
     size: TerminalSize,
     shared: Arc<Shared>,
     input: Receiver<Vec<u8>>,
+    writer_nudge: SyncSender<Vec<u8>>,
     output: SyncSender<Vec<u8>>,
     replies: Receiver<Vec<u8>>,
 ) -> SessionStatus {
-    let result = run_inner(spec, size, shared.clone(), input, output, replies);
+    let result = run_inner(
+        spec,
+        size,
+        shared.clone(),
+        input,
+        writer_nudge,
+        output,
+        replies,
+    );
     // run_inner's Runtime has finished all teardown before this status is returned.
     let failure = shared
         .failure
@@ -574,10 +613,11 @@ fn run_inner(
     size: TerminalSize,
     shared: Arc<Shared>,
     input: Receiver<Vec<u8>>,
+    writer_nudge: SyncSender<Vec<u8>>,
     output: SyncSender<Vec<u8>>,
     replies: Receiver<Vec<u8>>,
 ) -> Result<Option<u32>, String> {
-    let mut runtime = Runtime::new(shared.clone());
+    let mut runtime = Runtime::new(shared.clone(), writer_nudge);
     let (pty_input, host_input) = pipe()?;
     let (host_output, pty_output) = pipe()?;
     runtime.console = Some(PseudoConsole::new(size, &pty_input, &pty_output)?);
@@ -588,7 +628,13 @@ fn run_inner(
     runtime.reader = Some(IoWorker::spawn(
         "terminal-reader",
         shared.clone(),
-        move || read_output(host_output, reader_shared, output),
+        move || {
+            let ring_shared = reader_shared.clone();
+            read_output(host_output, reader_shared, output);
+            // After read_output has dropped its sender, so the parser finds
+            // the channel closed; the lifecycle thread sees output_eof.
+            ring_shared.ring();
+        },
     )?);
     let writer_shared = shared.clone();
     runtime.writer = Some(IoWorker::spawn(
@@ -631,8 +677,20 @@ fn run_inner(
                 .resize(TerminalSize::unpack(desired))?;
             shared.actual_size.store(desired, Ordering::Release);
             shared.revision.fetch_add(1, Ordering::Release);
+            shared.bell.ring();
         }
-        thread::sleep(Duration::from_millis(10));
+        // Sleep until the shell exits or a stop, resize or end of output
+        // signals the control event, instead of checking every 10 ms.
+        match &shared.control {
+            Some(control) => {
+                let handles = [process.0, control.0.0];
+                let woke = unsafe { WaitForMultipleObjects(2, handles.as_ptr(), 0, INFINITE) };
+                if woke != WAIT_OBJECT_0 && woke != WAIT_OBJECT_0 + 1 {
+                    thread::sleep(Duration::from_millis(10));
+                }
+            }
+            None => thread::sleep(Duration::from_millis(10)),
+        }
     }
 }
 
@@ -665,6 +723,52 @@ mod tests {
             );
             thread::sleep(Duration::from_millis(15));
         }
+    }
+
+    // What an idle shell costs: the CPU time this process uses
+    // while the shell sits at its prompt. Prints the process ID so thread
+    // wakeups can be counted from outside (typeperf "\Thread(*)\Context
+    // Switches/sec").
+    #[test]
+    #[ignore = "live Windows ConPTY measurement; run explicitly with --ignored --nocapture"]
+    fn terminal_live_idle_cost() {
+        use windows_sys::Win32::Foundation::FILETIME;
+        use windows_sys::Win32::System::Threading::{GetCurrentProcess, GetProcessTimes};
+        // Milliseconds of CPU time, kernel and user.
+        fn cpu_ms() -> u64 {
+            let zero = FILETIME {
+                dwLowDateTime: 0,
+                dwHighDateTime: 0,
+            };
+            let (mut created, mut exited, mut kernel, mut user) = (zero, zero, zero, zero);
+            unsafe {
+                GetProcessTimes(
+                    GetCurrentProcess(),
+                    &mut created,
+                    &mut exited,
+                    &mut kernel,
+                    &mut user,
+                );
+            }
+            let ticks =
+                |time: FILETIME| ((time.dwHighDateTime as u64) << 32) | time.dwLowDateTime as u64;
+            (ticks(kernel) + ticks(user)) / 10_000
+        }
+        let mut service = TerminalService::default();
+        let request = LaunchRequest::shell(std::env::current_dir().unwrap()).without_profile();
+        let id = service
+            .start(SessionKind::Shell, request, TerminalSize::default())
+            .unwrap();
+        await_snapshot(&mut service, id, |s| s.status == SessionStatus::Running);
+        // Let the prompt settle before measuring.
+        thread::sleep(Duration::from_secs(3));
+        println!("measuring pid {}", std::process::id());
+        let before = cpu_ms();
+        thread::sleep(Duration::from_secs(10));
+        println!("idle shell for 10 s: {} ms CPU", cpu_ms() - before);
+        service.stop(id).unwrap();
+        await_snapshot(&mut service, id, |s| s.status.is_final());
+        service.remove(id).unwrap();
     }
 
     #[test]
@@ -823,7 +927,7 @@ mod tests {
             callback: Arc::new(|| {}),
         });
         let shared = Arc::new(Shared::new(size, wake));
-        let (_input, input_rx) = mpsc::sync_channel(1);
+        let (input, input_rx) = mpsc::sync_channel(1);
         let (_replies, reply_rx) = mpsc::sync_channel(1);
         let (output_tx, output_rx) = mpsc::sync_channel(1);
         let drain = thread::spawn(move || while output_rx.recv().is_ok() {});
@@ -834,7 +938,7 @@ mod tests {
             cwd,
             environment: vec![],
         };
-        let result = run(spec, size, shared, input_rx, output_tx, reply_rx);
+        let result = run(spec, size, shared, input_rx, input, output_tx, reply_rx);
         assert!(matches!(result, SessionStatus::Failed(_)));
         drain.join().unwrap();
     }

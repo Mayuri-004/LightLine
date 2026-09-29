@@ -14,7 +14,7 @@ pub use model::{Cell, Color, Cursor, Row, SCROLLBACK_LINES, Snapshot, TerminalMo
 
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 pub const MAX_INPUT_BYTES: usize = 64 * 1024;
@@ -150,6 +150,41 @@ impl Wake {
     }
 }
 
+// Wakes the parser thread when it has work: output to read, or a resize,
+// status, scroll or end-of-session change to publish. It used to wake every
+// 12 ms to check, all the time a terminal was open. Latched, so a ring that
+// comes before the wait isn't lost.
+#[derive(Default)]
+struct Doorbell {
+    rung: Mutex<bool>,
+    bell: Condvar,
+}
+
+impl Doorbell {
+    fn ring(&self) {
+        *self.rung.lock().unwrap_or_else(|e| e.into_inner()) = true;
+        self.bell.notify_one();
+    }
+
+    // Waits for a ring, or at most `timeout` when there is one.
+    fn wait(&self, timeout: Option<Duration>) {
+        let rung = self.rung.lock().unwrap_or_else(|e| e.into_inner());
+        let mut rung = match timeout {
+            None => self
+                .bell
+                .wait_while(rung, |rung| !*rung)
+                .unwrap_or_else(|e| e.into_inner()),
+            Some(timeout) => {
+                self.bell
+                    .wait_timeout_while(rung, timeout, |rung| !*rung)
+                    .unwrap_or_else(|e| e.into_inner())
+                    .0
+            }
+        };
+        *rung = false;
+    }
+}
+
 struct Shared {
     stop: AtomicBool,
     io_stop: AtomicBool,
@@ -167,6 +202,11 @@ struct Shared {
     failure: Mutex<Option<String>>,
     latest: Mutex<Option<Arc<Snapshot>>>,
     wake: Arc<Wake>,
+    bell: Doorbell,
+    // Wakes the lifecycle thread for a stop, a resize or the end of output;
+    // it otherwise waits on the shell process itself.
+    #[cfg(windows)]
+    control: Option<platform::Signal>,
 }
 
 impl Shared {
@@ -188,12 +228,25 @@ impl Shared {
             failure: Mutex::new(None),
             latest: Mutex::new(None),
             wake,
+            bell: Doorbell::default(),
+            #[cfg(windows)]
+            control: platform::Signal::new(),
+        }
+    }
+
+    // Wakes the session's waiting threads to look at what changed.
+    fn ring(&self) {
+        self.bell.ring();
+        #[cfg(windows)]
+        if let Some(control) = &self.control {
+            control.set();
         }
     }
 
     fn set_status(&self, status: SessionStatus) {
         *self.status.lock().unwrap_or_else(|e| e.into_inner()) = status;
         self.revision.fetch_add(1, Ordering::Release);
+        self.ring();
     }
 
     fn fail(&self, message: String) {
@@ -202,6 +255,7 @@ impl Shared {
             *failure = Some(message);
         }
         self.stop.store(true, Ordering::Release);
+        self.ring();
     }
 
     fn publish(&self, snapshot: Snapshot) {
@@ -262,10 +316,11 @@ impl TerminalService {
             let shared = Arc::new(Shared::new(size, self.wake.clone()));
             let worker_shared = shared.clone();
             let (input, input_rx) = mpsc::sync_channel(INPUT_QUEUE);
+            let nudge = input.clone();
             std::thread::Builder::new()
                 .name(format!("terminal-owner-{number}"))
                 .spawn(move || {
-                    run_session(id, kind, request, size, worker_shared, input_rx);
+                    run_session(id, kind, request, size, worker_shared, input_rx, nudge);
                 })
                 .map_err(|error| ControlError::Spawn(error.to_string()))?;
             *slot = Some(Session {
@@ -334,6 +389,7 @@ impl TerminalService {
             return Err(ControlError::Closed);
         }
         shared.desired_size.store(size.packed(), Ordering::Release);
+        shared.ring();
         Ok(())
     }
 
@@ -346,11 +402,14 @@ impl TerminalService {
             .scrollback
             .store(offset.min(SCROLLBACK_LINES), Ordering::Release);
         shared.revision.fetch_add(1, Ordering::Release);
+        shared.ring();
         Ok(())
     }
 
     pub fn stop(&self, id: SessionId) -> Result<(), ControlError> {
-        self.session(id)?.shared.stop.store(true, Ordering::Release);
+        let shared = &self.session(id)?.shared;
+        shared.stop.store(true, Ordering::Release);
+        shared.ring();
         Ok(())
     }
 
@@ -376,6 +435,7 @@ impl TerminalService {
             .shared
             .released
             .store(true, Ordering::Release);
+        self.sessions[index].as_ref().unwrap().shared.ring();
         self.sessions[index] = None;
         Ok(())
     }
@@ -443,6 +503,7 @@ impl Drop for TerminalService {
         for session in self.sessions.iter().flatten() {
             session.shared.stop.store(true, Ordering::Release);
             session.shared.released.store(true, Ordering::Release);
+            session.shared.ring();
         }
     }
 }
@@ -455,15 +516,26 @@ fn run_session(
     size: TerminalSize,
     shared: Arc<Shared>,
     input: Receiver<Vec<u8>>,
+    // Sends nothing, only wakes the input writer (see platform::write_input).
+    nudge: SyncSender<Vec<u8>>,
 ) {
     let (output_tx, output_rx) = mpsc::sync_channel(OUTPUT_QUEUE);
     let (reply_tx, reply_rx) = mpsc::sync_channel(REPLY_QUEUE);
     let model_shared = shared.clone();
+    let model_nudge = nudge.clone();
     let model_thread = std::thread::Builder::new()
         .name(format!("terminal-model-{}", id.0))
         .spawn(move || {
             if let Err(panic) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                model_worker(id, kind, size, model_shared.clone(), output_rx, reply_tx);
+                model_worker(
+                    id,
+                    kind,
+                    size,
+                    model_shared.clone(),
+                    output_rx,
+                    reply_tx,
+                    model_nudge,
+                );
             })) {
                 model_shared.fail("Terminal parser worker panicked".into());
                 std::panic::resume_unwind(panic);
@@ -487,11 +559,20 @@ fn run_session(
         if shared.stop.load(Ordering::Acquire) {
             return SessionStatus::Stopped;
         }
-        platform::run(launch, size, shared.clone(), input, output_tx, reply_rx)
+        platform::run(
+            launch,
+            size,
+            shared.clone(),
+            input,
+            nudge,
+            output_tx,
+            reply_rx,
+        )
     }))
     .unwrap_or_else(|_| SessionStatus::Failed("Terminal lifecycle worker panicked".into()));
     shared.set_status(outcome);
     shared.owner_done.store(true, Ordering::Release);
+    shared.ring();
     if model_thread.join().is_err() {
         shared.finished.store(true, Ordering::Release);
         let status = SessionStatus::Failed("Terminal parser worker panicked".into());
@@ -506,6 +587,7 @@ fn model_worker(
     shared: Arc<Shared>,
     output: Receiver<Vec<u8>>,
     replies: SyncSender<Vec<u8>>,
+    nudge: SyncSender<Vec<u8>>,
 ) {
     let mut model = TerminalModel::new(size);
     let mut generation = 0u64;
@@ -517,23 +599,22 @@ fn model_worker(
     loop {
         let turn = Instant::now();
         let mut consumed = 0;
+        // Whether all waiting output was read, rather than the budget running out.
+        let mut drained = disconnected;
         // A finite per-turn budget gives status/scroll/resize work time during output floods.
-        while consumed < 64 * 1024 && turn.elapsed() < Duration::from_millis(4) {
-            let received = if consumed == 0 && !disconnected {
-                output.recv_timeout(Duration::from_millis(12))
-            } else {
-                output.try_recv().map_err(|error| match error {
-                    mpsc::TryRecvError::Empty => mpsc::RecvTimeoutError::Timeout,
-                    mpsc::TryRecvError::Disconnected => mpsc::RecvTimeoutError::Disconnected,
-                })
-            };
-            match received {
+        while !disconnected && consumed < 64 * 1024 && turn.elapsed() < Duration::from_millis(4) {
+            match output.try_recv() {
                 Ok(bytes) => {
                     consumed += bytes.len();
                     model.process(&bytes);
                     shared.modes.store(model.modes().bits(), Ordering::Release);
                     match model.take_replies() {
                         Ok(pending) if !shared.io_stop.load(Ordering::Acquire) => {
+                            if !pending.is_empty() {
+                                // The writer waits for input; this wakes it to send
+                                // the replies. A full queue means it's awake anyway.
+                                let _ = nudge.try_send(Vec::new());
+                            }
                             for reply in pending {
                                 if replies.try_send(reply).is_err() {
                                     if !shared.io_stop.load(Ordering::Acquire) {
@@ -553,11 +634,15 @@ fn model_worker(
                     }
                     dirty = true;
                 }
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                Err(mpsc::TryRecvError::Disconnected) => {
                     disconnected = true;
+                    drained = true;
                     break;
                 }
-                Err(mpsc::RecvTimeoutError::Timeout) => break,
+                Err(mpsc::TryRecvError::Empty) => {
+                    drained = true;
+                    break;
+                }
             }
         }
         let actual_size = TerminalSize::unpack(shared.actual_size.load(Ordering::Acquire));
@@ -602,8 +687,12 @@ fn model_worker(
         if done && shared.released.load(Ordering::Acquire) {
             break;
         }
-        if disconnected {
-            std::thread::sleep(Duration::from_millis(10));
+        if drained {
+            // Nothing left to read: sleep until something changes, or until a
+            // frame held back by the 32 ms limit is due.
+            let due =
+                dirty.then(|| Duration::from_millis(32).saturating_sub(last_publish.elapsed()));
+            shared.bell.wait(due);
         }
     }
 }

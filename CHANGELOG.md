@@ -38,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Colored Code Blocks**: Rust and Python code blocks in AI answers and in the Markdown preview use the editor's syntax colors.
 
 #### Changed
+- **Idle Terminals Use No CPU**: An open terminal woke its background threads about 100 times a second to check for work, even with nothing happening. They now sleep until there is output, input, a resize or a stop. An idle shell went from about 100 wakeups and 47 ms of CPU every 10 seconds to none.
 - **No Terminal at Startup**: LightLine no longer starts a PowerShell session on every launch. Startup is faster, the Welcome screen shows again, and the editor keeps keyboard focus. `` Ctrl+` `` starts the first terminal when you need it.
 - **No Stray "Untitled" Tab**: Opening a folder (or closing the last file) no longer shows an empty "Untitled" tab. The editor says no file is open and how to open one; `Ctrl+N` still creates a real Untitled file.
 
