@@ -796,6 +796,12 @@ mod tests {
             Err(FormatError::NotAvailable) => {
                 eprintln!("skipped: prettier/npx not found on PATH");
             }
+            // Without prettier installed, `npx --yes prettier` downloads it
+            // first, which on a fresh machine (GitHub's runners) takes longer
+            // than the timeout. The timeout itself is tested below.
+            Err(FormatError::Timeout) => {
+                eprintln!("skipped: prettier didn't finish in time (npx may be downloading it)");
+            }
             Err(other) => panic!("unexpected formatting error: {other}"),
         }
     }
