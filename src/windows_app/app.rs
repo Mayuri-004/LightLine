@@ -25,6 +25,7 @@ pub(super) enum TerminalTab {
 // fixed Shell + ManagedRun mailbox that the Output session still uses.
 pub(super) struct TerminalPane {
     pub(super) title: String,
+    pub(super) custom_title: bool,
     pub(super) service: TerminalService,
     pub(super) id: SessionId,
     pub(super) snapshot: Option<Arc<Snapshot>>,
@@ -620,6 +621,8 @@ pub(super) struct App {
     pub(super) terminal_profile_menu_open: bool,
     pub(super) terminal_profile_defaults_open: bool,
     pub(super) terminal_profile_availability: Vec<(ShellKind, bool)>,
+    pub(super) terminal_context_menu: Option<(SessionId, i32, i32)>,
+    pub(super) terminal_rename_input: Option<(SessionId, String)>,
     pub(super) cell_width: i32,
     // Width of one character of the editor font, for word wrap columns.
     pub(super) char_width: i32,
@@ -1133,6 +1136,8 @@ impl App {
             terminal_profile_menu_open: false,
             terminal_profile_defaults_open: false,
             terminal_profile_availability: Vec::new(),
+            terminal_context_menu: None,
+            terminal_rename_input: None,
             cell_width: 0,
             char_width,
             changes: Vec::new(),

@@ -181,6 +181,7 @@ pub struct TerminalModel {
     parser: vt100::Parser<Callbacks>,
     osc_length: Option<usize>,
     escape_pending: bool,
+    csi_params: Option<Vec<u8>>,
 }
 
 impl TerminalModel {
@@ -195,6 +196,7 @@ impl TerminalModel {
             ),
             osc_length: None,
             escape_pending: false,
+            csi_params: None,
         }
     }
 
@@ -204,6 +206,7 @@ impl TerminalModel {
         // Never decode chunks independently: vte retains incomplete UTF-8 and VT sequences.
         let mut start = 0;
         for (index, &byte) in bytes.iter().enumerate() {
+            let mut clear_scrollback = false;
             let keep = if let Some(length) = self.osc_length {
                 if matches!(byte, 7 | 24 | 26 | 27) {
                     self.osc_length = None;
@@ -213,9 +216,28 @@ impl TerminalModel {
                     self.osc_length = Some((length + 1).min(8_193));
                     length < 8_192
                 }
+            } else if let Some(params) = self.csi_params.as_mut() {
+                if byte == 27 {
+                    self.csi_params = None;
+                    self.escape_pending = true;
+                } else if matches!(byte, 24 | 26) {
+                    self.csi_params = None;
+                } else if (0x40..=0x7e).contains(&byte) {
+                    clear_scrollback = byte == b'J' && matches!(params.as_slice(), b"2" | b"3");
+                    self.csi_params = None;
+                    self.escape_pending = false;
+                } else if (0x20..=0x3f).contains(&byte) && params.len() < 128 {
+                    params.push(byte);
+                } else {
+                    self.csi_params = None;
+                }
+                true
             } else {
                 if self.escape_pending && byte == b']' {
                     self.osc_length = Some(0);
+                } else if self.escape_pending && byte == b'[' {
+                    self.csi_params = Some(Vec::new());
+                    self.escape_pending = false;
                 }
                 if byte == 27 {
                     self.escape_pending = true;
@@ -224,6 +246,14 @@ impl TerminalModel {
                 }
                 true
             };
+            if clear_scrollback {
+                if start <= index {
+                    self.parser.process(&bytes[start..=index]);
+                }
+                self.clear_scrollback();
+                start = index + 1;
+                continue;
+            }
             if !keep {
                 if start < index {
                     self.parser.process(&bytes[start..index]);
@@ -234,6 +264,20 @@ impl TerminalModel {
         if start < bytes.len() {
             self.parser.process(&bytes[start..]);
         }
+    }
+
+    fn clear_scrollback(&mut self) {
+        if self.parser.screen().alternate_screen() {
+            return;
+        }
+        let (rows, columns, state) = {
+            let screen = self.parser.screen();
+            let (rows, columns) = screen.size();
+            (rows, columns, screen.state_formatted())
+        };
+        let callbacks = std::mem::take(self.parser.callbacks_mut());
+        self.parser = vt100::Parser::new_with_callbacks(rows, columns, SCROLLBACK_LINES, callbacks);
+        self.parser.process(&state);
     }
 
     pub fn resize(&mut self, size: TerminalSize) {
@@ -430,5 +474,31 @@ mod tests {
         );
         model.process(b"\x1b[2J\x1b[H");
         assert_eq!(snapshot(&mut model, 0).text().trim(), "");
+    }
+
+    #[test]
+    fn clear_sequences_discard_scrollback_and_keep_terminal_usable() {
+        for clear_sequence in [b"\x1b[2J\x1b[H".as_slice(), b"\x1b[3J".as_slice()] {
+            let mut model = TerminalModel::new(TerminalSize::new(3, 12).unwrap());
+            model.process(b"before-1\r\nbefore-2\r\nbefore-3\r\n");
+            model.process(b"\x1b[?1h\x1b[?2004h");
+            assert!(snapshot(&mut model, 0).scrollback_available > 0);
+
+            for split in 0..=clear_sequence.len() {
+                let mut split_model = TerminalModel::new(TerminalSize::new(3, 12).unwrap());
+                split_model.process(b"before-1\r\nbefore-2\r\nbefore-3\r\n");
+                split_model.process(b"\x1b[?1h\x1b[?2004h");
+                split_model.process(&clear_sequence[..split]);
+                split_model.process(&clear_sequence[split..]);
+                let cleared = snapshot(&mut split_model, usize::MAX);
+                assert_eq!(cleared.scrollback_available, 0);
+                assert_eq!(cleared.scrollback_offset, 0);
+                assert!(cleared.modes.application_cursor);
+                assert!(cleared.modes.bracketed_paste);
+                assert!(!cleared.text().contains("before-"));
+                split_model.process(b"after");
+                assert!(snapshot(&mut split_model, 0).text().contains("after"));
+            }
+        }
     }
 }

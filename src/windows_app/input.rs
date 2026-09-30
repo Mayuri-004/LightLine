@@ -34,6 +34,23 @@ impl App {
         let ctrl = unsafe { GetKeyState(VK_CONTROL as i32) } < 0;
         let shift = unsafe { GetKeyState(VK_SHIFT as i32) } < 0;
         let alt = unsafe { GetKeyState(VK_MENU as i32) } < 0;
+        if self.terminal_rename_input.is_some() {
+            match key {
+                x if x == VK_ESCAPE as u32 => {
+                    self.terminal_rename_input = None;
+                    unsafe { InvalidateRect(hwnd, null(), 0) };
+                }
+                x if x == VK_BACK as u32 => {
+                    if let Some((_, name)) = &mut self.terminal_rename_input {
+                        name.pop();
+                    }
+                    unsafe { InvalidateRect(hwnd, null(), 0) };
+                }
+                x if x == VK_RETURN as u32 => self.finish_terminal_rename(hwnd),
+                _ => {}
+            }
+            return true;
+        }
         if self.editor_context_key(hwnd, key, ctrl, shift) {
             return true;
         }
@@ -878,6 +895,18 @@ impl App {
         if unsafe { GetKeyState(VK_CONTROL as i32) } < 0 {
             return;
         }
+        if let Some((_, name)) = &mut self.terminal_rename_input {
+            if unit >= 32
+                && unit != 127
+                && name.chars().count() < 48
+                && let Some(ch) = char::from_u32(unit as u32)
+                && !ch.is_control()
+            {
+                name.push(ch);
+                unsafe { InvalidateRect(hwnd, null(), 0) };
+            }
+            return;
+        }
         if self.ai.model_menu_open && self.ai_assistant_visible {
             self.ai_char(hwnd, unit);
             return;
@@ -1217,6 +1246,28 @@ impl App {
         let mut rect = RECT::default();
         unsafe {
             GetClientRect(hwnd, &mut rect);
+        }
+        if self.terminal_context_menu.is_some() {
+            let menu = self.terminal_context_menu_rect(
+                self.editor_left(),
+                rect.right,
+                rect.bottom - self.scale(STATUS),
+            );
+            let target = self
+                .terminal_context_menu
+                .map(|(session_id, _, _)| session_id);
+            self.terminal_context_menu = None;
+            if let (Some(menu), Some(session_id)) = (menu, target)
+                && x >= menu.left
+                && x < menu.right
+                && y >= menu.top
+                && y < menu.bottom
+            {
+                self.rename_terminal(hwnd, session_id);
+            } else {
+                unsafe { InvalidateRect(hwnd, null(), 0) };
+            }
+            return;
         }
         if self.terminal_profile_menu_open {
             let left = self.editor_left();
@@ -2023,9 +2074,19 @@ impl App {
             let right = rect.right;
             if x >= left && x < right && y >= top && y < top + self.scale(TERMINAL_HEADER) {
                 let hit = self.terminal_header_hit(left, right, top, x, y);
-                if matches!(hit, TerminalHeaderHit::New | TerminalHeaderHit::ShellPicker) {
-                    self.toggle_terminal_profile_menu(hwnd);
-                    return;
+                match hit {
+                    TerminalHeaderHit::TerminalTab(index) => {
+                        if let Some(pane) = self.terminals.get(index) {
+                            self.terminal_context_menu = Some((pane.id, x, y));
+                        }
+                        unsafe { InvalidateRect(hwnd, null(), 0) };
+                        return;
+                    }
+                    TerminalHeaderHit::New | TerminalHeaderHit::ShellPicker => {
+                        self.toggle_terminal_profile_menu(hwnd);
+                        return;
+                    }
+                    _ => {}
                 }
             }
         }
