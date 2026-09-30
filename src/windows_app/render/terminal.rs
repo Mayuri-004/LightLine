@@ -41,14 +41,36 @@ impl App {
         let layout = self.terminal_header_layout(left, right, top);
         let header_bottom = layout.header_bottom;
 
+        let (errors, warnings) = self.problem_counts();
+        let problem_count = errors + warnings;
+        let problems_active = self.terminal_tab == TerminalTab::Problems;
+        let problems_label = format!("PROBLEMS  {problem_count}");
+
         Self::label(
             hdc,
-            "PROBLEMS  0",
+            &problems_label,
             layout.problems.left,
             top + self.scale(9),
-            self.theme.muted,
+            if problems_active {
+                self.theme.text
+            } else {
+                self.theme.muted
+            },
             layout.problems,
         );
+
+        if problems_active {
+            Self::fill(
+                hdc,
+                RECT {
+                    left: layout.problems.left,
+                    top: header_bottom - self.scale(2),
+                    right: layout.problems.right,
+                    bottom: header_bottom,
+                },
+                self.theme.violet,
+            );
+        }
 
         let output_active = self.terminal_tab == TerminalTab::Output;
         Self::label(
@@ -165,6 +187,7 @@ impl App {
                 .terminals
                 .get(self.terminal_active)
                 .and_then(|pane| pane.snapshot.clone()),
+            TerminalTab::Problems => None,
         };
         let status = match &active_snapshot {
             Some(snapshot) => match &snapshot.status {
@@ -204,6 +227,103 @@ impl App {
             self.theme.muted,
             layout.hide,
         );
+        if self.terminal_tab == TerminalTab::Problems {
+            let mut row_y = header_bottom + self.scale(8);
+            let row_height = self.scale(28);
+            let mut problem_index = 0usize;
+
+            for tab in &self.tabs {
+                let Some(path) = tab.display_path() else {
+                    continue;
+                };
+
+                for diagnostic in &tab.diagnostics {
+                    let selected = problem_index == self.problem_selected;
+
+                    if selected {
+                        Self::fill(
+                            hdc,
+                            RECT {
+                                left: left + self.scale(4),
+                                top: row_y - self.scale(4),
+                                right: right - self.scale(4),
+                                bottom: row_y + row_height - self.scale(4),
+                            },
+                            self.theme.card_edge,
+                        );
+                    }
+
+                    let severity = match diagnostic.severity {
+                        1 => "ERROR",
+                        2 => "WARNING",
+                        _ => "PROBLEM",
+                    };
+
+                    let file_name = path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or("Unknown file");
+
+                    let line = diagnostic.range.start.line + 1;
+
+                    let text = format!(
+                        "{severity}  {file_name}:{line}  {}",
+                        diagnostic.message.lines().next().unwrap_or("")
+                    );
+
+                    Self::label(
+                        hdc,
+                        &text,
+                        left + self.scale(12),
+                        row_y,
+                        if selected {
+                            self.theme.text
+                        } else {
+                            self.theme.muted
+                        },
+                        RECT {
+                            left,
+                            top: row_y - self.scale(4),
+                            right,
+                            bottom: row_y + row_height,
+                        },
+                    );
+
+                    row_y += row_height;
+                    problem_index += 1;
+
+                    if row_y > bottom - self.scale(8) {
+                        break;
+                    }
+                }
+
+                if row_y > bottom - self.scale(8) {
+                    break;
+                }
+            }
+
+            if problem_index == 0 {
+                Self::label(
+                    hdc,
+                    "No problems in open files",
+                    left + self.scale(12),
+                    header_bottom + self.scale(12),
+                    self.theme.muted,
+                    RECT {
+                        left,
+                        top: header_bottom,
+                        right,
+                        bottom,
+                    },
+                );
+            }
+
+            if self.terminal_profile_menu_open {
+                self.paint_terminal_profile_menu(hdc, left, right, top, bottom);
+            }
+
+            return;
+        }
         let Some(snapshot) = active_snapshot else {
             if self.terminal_profile_menu_open {
                 self.paint_terminal_profile_menu(hdc, left, right, top, bottom);

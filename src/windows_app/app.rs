@@ -17,6 +17,7 @@ pub(super) enum SideView {
 pub(super) enum TerminalTab {
     Output,
     Terminal,
+    Problems,
 }
 
 // One interactive shell instance in the bottom Terminal area. Each pane owns
@@ -580,6 +581,7 @@ pub(super) struct App {
     pub(super) terminal_selecting: bool,
     pub(super) terminal_select_anchor: Option<(u16, u16)>,
     pub(super) terminal_select_end: Option<(u16, u16)>,
+    pub(super) problem_selected: usize,
     pub(super) explorer_first_row: usize,
     pub(super) explorer_input: Option<ExplorerInputState>,
     pub(super) selected_explorer_path: Option<PathBuf>,
@@ -1123,6 +1125,7 @@ impl App {
             }),
             terminal_tab: TerminalTab::Terminal,
             terminals: Vec::new(),
+            problem_selected: 0,
             terminal_active: 0,
             terminal_counter: 0,
             run_session: None,
