@@ -328,7 +328,7 @@ impl App {
                     right: menu.right - self.scale(1),
                     bottom: menu.bottom - self.scale(1),
                 },
-                self.theme.card_bg,
+                self.theme.sidebar_bg,
             );
             Self::label(
                 hdc,
@@ -357,7 +357,7 @@ impl App {
                 field,
                 self.scale(4),
                 self.theme.card_edge,
-                self.theme.card_bg,
+                self.theme.sidebar_bg,
             );
             Self::label(
                 hdc,
