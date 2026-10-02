@@ -928,13 +928,13 @@ impl App {
                 self.terminal_rename_input = None;
                 unsafe { InvalidateRect(hwnd, null(), 0) };
             } else {
-                if let Some(ch) = decode_utf16_input(&mut self.pending_high_surrogate, unit) {
-                    if let Some((_, name)) = &mut self.terminal_rename_input {
-                        if !ch.is_control() && name.chars().count() < 48 {
-                            name.push(ch);
-                            unsafe { InvalidateRect(hwnd, null(), 0) };
-                        }
-                    }
+                if let Some(ch) = decode_utf16_input(&mut self.pending_high_surrogate, unit)
+                    && let Some((_, name)) = &mut self.terminal_rename_input
+                    && !ch.is_control()
+                    && name.chars().count() < 48
+                {
+                    name.push(ch);
+                    unsafe { InvalidateRect(hwnd, null(), 0) };
                 }
                 return;
             }
