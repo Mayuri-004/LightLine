@@ -1399,6 +1399,7 @@ impl App {
 #[cfg(test)]
 mod input_tests {
     use super::*;
+    use crate::windows_app::input::decode_utf16_input;
 
     fn pane(id: u64, title: &str) -> TerminalPane {
         TerminalPane {
@@ -1525,12 +1526,8 @@ mod input_tests {
         let bottom_bound = 400;
 
         let clamp = |anchor_x: i32, anchor_y: i32| {
-            let left = anchor_x
-                .min(right_bound - width - 6)
-                .max(left_bound + 6);
-            let top = anchor_y
-                .min(bottom_bound - height - 4)
-                .max(4);
+            let left = anchor_x.min(right_bound - width - 6).max(left_bound + 6);
+            let top = anchor_y.min(bottom_bound - height - 4).max(4);
             RECT {
                 left,
                 top,

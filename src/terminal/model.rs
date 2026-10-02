@@ -295,20 +295,26 @@ impl TerminalModel {
         if self.parser.screen().alternate_screen() {
             return;
         }
-        let (rows, columns, state, current_cursor, current_attrs) = {
+        let (rows, columns, input_modes, hide_cursor, current_cursor, current_attrs) = {
             let screen = self.parser.screen();
             let (rows, columns) = screen.size();
             (
                 rows,
                 columns,
-                screen.state_formatted(),
+                screen.input_mode_formatted(),
+                screen.hide_cursor(),
                 screen.cursor_position(),
                 screen.attributes_formatted(),
             )
         };
         let callbacks = std::mem::take(self.parser.callbacks_mut());
         self.parser = vt100::Parser::new_with_callbacks(rows, columns, SCROLLBACK_LINES, callbacks);
-        self.parser.process(&state);
+        if !input_modes.is_empty() {
+            self.parser.process(&input_modes);
+        }
+        if hide_cursor {
+            self.parser.process(b"\x1b[?25l");
+        }
 
         if let Some(saved) = &self.saved_cursor {
             let r = saved.position.0.min(rows.saturating_sub(1)) + 1;
@@ -318,13 +324,14 @@ impl TerminalModel {
                 self.parser.process(&saved.attrs);
             }
             self.parser.process(b"\x1b7");
+        }
 
-            let cur_r = current_cursor.0.min(rows.saturating_sub(1)) + 1;
-            let cur_c = current_cursor.1.min(columns.saturating_sub(1)) + 1;
-            self.parser.process(format!("\x1b[{cur_r};{cur_c}H").as_bytes());
-            if !current_attrs.is_empty() {
-                self.parser.process(&current_attrs);
-            }
+        let cur_r = current_cursor.0.min(rows.saturating_sub(1)) + 1;
+        let cur_c = current_cursor.1.min(columns.saturating_sub(1)) + 1;
+        self.parser
+            .process(format!("\x1b[{cur_r};{cur_c}H").as_bytes());
+        if !current_attrs.is_empty() {
+            self.parser.process(&current_attrs);
         }
     }
 

@@ -1290,9 +1290,8 @@ impl App {
         }
         if self.terminal_rename_input.is_some() {
             let field = self.terminal_rename_field_rect(hwnd);
-            let inside = field.is_some_and(|f| {
-                x >= f.left && x < f.right && y >= f.top && y < f.bottom
-            });
+            let inside =
+                field.is_some_and(|f| x >= f.left && x < f.right && y >= f.top && y < f.bottom);
             if !inside {
                 self.terminal_rename_input = None;
                 unsafe { InvalidateRect(hwnd, null(), 0) };
@@ -2106,8 +2105,10 @@ impl App {
                 match hit {
                     TerminalHeaderHit::TerminalTab(index) => {
                         if let Some(pane) = self.terminals.get(index) {
-                            let bottom = (rect.bottom - self.scale(STATUS)).max(0) - self.chrome_gap();
-                            let menu_rect = self.terminal_context_menu_rect(x, y, left, right, bottom);
+                            let bottom =
+                                (rect.bottom - self.scale(STATUS)).max(0) - self.chrome_gap();
+                            let menu_rect =
+                                self.terminal_context_menu_rect(x, y, left, right, bottom);
                             self.terminal_context_menu = Some((pane.id, menu_rect));
                         }
                         unsafe { InvalidateRect(hwnd, null(), 0) };
