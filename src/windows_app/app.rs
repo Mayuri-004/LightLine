@@ -621,7 +621,7 @@ pub(super) struct App {
     pub(super) terminal_profile_menu_open: bool,
     pub(super) terminal_profile_defaults_open: bool,
     pub(super) terminal_profile_availability: Vec<(ShellKind, bool)>,
-    pub(super) terminal_context_menu: Option<(SessionId, i32, i32)>,
+    pub(super) terminal_context_menu: Option<(SessionId, RECT)>,
     pub(super) terminal_rename_input: Option<(SessionId, String)>,
     pub(super) cell_width: i32,
     // Width of one character of the editor font, for word wrap columns.

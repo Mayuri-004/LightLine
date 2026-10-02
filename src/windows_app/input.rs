@@ -28,6 +28,19 @@ fn is_editor_navigation_or_edit_key(key: u32) -> bool {
         || key == VK_DELETE as u32
 }
 
+pub(super) fn decode_utf16_input(pending_high: &mut Option<u16>, unit: u16) -> Option<char> {
+    if (0xd800..=0xdbff).contains(&unit) {
+        *pending_high = Some(unit);
+        None
+    } else if (0xdc00..=0xdfff).contains(&unit) {
+        let high = pending_high.take()?;
+        char::decode_utf16([high, unit]).next()?.ok()
+    } else {
+        *pending_high = None;
+        char::decode_utf16([unit]).next()?.ok()
+    }
+}
+
 impl App {
     pub(super) fn key(&mut self, hwnd: HWND, key: u32) -> bool {
         self.clear_hover(hwnd);
@@ -35,21 +48,33 @@ impl App {
         let shift = unsafe { GetKeyState(VK_SHIFT as i32) } < 0;
         let alt = unsafe { GetKeyState(VK_MENU as i32) } < 0;
         if self.terminal_rename_input.is_some() {
-            match key {
-                x if x == VK_ESCAPE as u32 => {
-                    self.terminal_rename_input = None;
-                    unsafe { InvalidateRect(hwnd, null(), 0) };
-                }
-                x if x == VK_BACK as u32 => {
-                    if let Some((_, name)) = &mut self.terminal_rename_input {
-                        name.pop();
+            if !self.terminal_focus
+                || !self.terminal_visible
+                || self.terminal_tab != TerminalTab::Terminal
+            {
+                self.terminal_rename_input = None;
+                unsafe { InvalidateRect(hwnd, null(), 0) };
+            } else {
+                match key {
+                    x if x == VK_ESCAPE as u32 => {
+                        self.terminal_rename_input = None;
+                        unsafe { InvalidateRect(hwnd, null(), 0) };
+                        return true;
                     }
-                    unsafe { InvalidateRect(hwnd, null(), 0) };
+                    x if x == VK_BACK as u32 => {
+                        if let Some((_, name)) = &mut self.terminal_rename_input {
+                            name.pop();
+                        }
+                        unsafe { InvalidateRect(hwnd, null(), 0) };
+                        return true;
+                    }
+                    x if x == VK_RETURN as u32 => {
+                        self.finish_terminal_rename(hwnd);
+                        return true;
+                    }
+                    _ => return true,
                 }
-                x if x == VK_RETURN as u32 => self.finish_terminal_rename(hwnd),
-                _ => {}
             }
-            return true;
         }
         if self.editor_context_key(hwnd, key, ctrl, shift) {
             return true;
@@ -895,17 +920,24 @@ impl App {
         if unsafe { GetKeyState(VK_CONTROL as i32) } < 0 {
             return;
         }
-        if let Some((_, name)) = &mut self.terminal_rename_input {
-            if unit >= 32
-                && unit != 127
-                && name.chars().count() < 48
-                && let Some(ch) = char::from_u32(unit as u32)
-                && !ch.is_control()
+        if self.terminal_rename_input.is_some() {
+            if !self.terminal_focus
+                || !self.terminal_visible
+                || self.terminal_tab != TerminalTab::Terminal
             {
-                name.push(ch);
+                self.terminal_rename_input = None;
                 unsafe { InvalidateRect(hwnd, null(), 0) };
+            } else {
+                if let Some(ch) = decode_utf16_input(&mut self.pending_high_surrogate, unit) {
+                    if let Some((_, name)) = &mut self.terminal_rename_input {
+                        if !ch.is_control() && name.chars().count() < 48 {
+                            name.push(ch);
+                            unsafe { InvalidateRect(hwnd, null(), 0) };
+                        }
+                    }
+                }
+                return;
             }
-            return;
         }
         if self.ai.model_menu_open && self.ai_assistant_visible {
             self.ai_char(hwnd, unit);
@@ -1247,27 +1279,24 @@ impl App {
         unsafe {
             GetClientRect(hwnd, &mut rect);
         }
-        if self.terminal_context_menu.is_some() {
-            let menu = self.terminal_context_menu_rect(
-                self.editor_left(),
-                rect.right,
-                rect.bottom - self.scale(STATUS),
-            );
-            let target = self
-                .terminal_context_menu
-                .map(|(session_id, _, _)| session_id);
+        if let Some((session_id, menu)) = self.terminal_context_menu {
             self.terminal_context_menu = None;
-            if let (Some(menu), Some(session_id)) = (menu, target)
-                && x >= menu.left
-                && x < menu.right
-                && y >= menu.top
-                && y < menu.bottom
-            {
+            if x >= menu.left && x < menu.right && y >= menu.top && y < menu.bottom {
                 self.rename_terminal(hwnd, session_id);
             } else {
                 unsafe { InvalidateRect(hwnd, null(), 0) };
             }
             return;
+        }
+        if self.terminal_rename_input.is_some() {
+            let field = self.terminal_rename_field_rect(hwnd);
+            let inside = field.is_some_and(|f| {
+                x >= f.left && x < f.right && y >= f.top && y < f.bottom
+            });
+            if !inside {
+                self.terminal_rename_input = None;
+                unsafe { InvalidateRect(hwnd, null(), 0) };
+            }
         }
         if self.terminal_profile_menu_open {
             let left = self.editor_left();
@@ -2071,13 +2100,15 @@ impl App {
             unsafe { GetClientRect(hwnd, &mut rect) };
             let left = self.editor_left();
             let top = self.terminal_top(hwnd);
-            let right = rect.right;
+            let right = self.editor_right(hwnd);
             if x >= left && x < right && y >= top && y < top + self.scale(TERMINAL_HEADER) {
                 let hit = self.terminal_header_hit(left, right, top, x, y);
                 match hit {
                     TerminalHeaderHit::TerminalTab(index) => {
                         if let Some(pane) = self.terminals.get(index) {
-                            self.terminal_context_menu = Some((pane.id, x, y));
+                            let bottom = (rect.bottom - self.scale(STATUS)).max(0) - self.chrome_gap();
+                            let menu_rect = self.terminal_context_menu_rect(x, y, left, right, bottom);
+                            self.terminal_context_menu = Some((pane.id, menu_rect));
                         }
                         unsafe { InvalidateRect(hwnd, null(), 0) };
                         return;

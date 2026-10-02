@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+#### Fixed
+- **Terminal Scrollback Clear Semantics**: Scrollback history is now discarded strictly on `CSI 3 J`, preserving scrollback on `CSI 2 J` screen erases and avoiding unnecessary parser reconstructions during screen updates.
+- **Terminal Saved Cursor and Mode Preservation**: Screen clearing and scrollback resets now preserve saved cursor positions (DECSC/DECRC) and terminal modes across parser reconstruction.
+- **Terminal Tab Renaming Focus and Outside Click**: The terminal rename input now captures keystrokes only while focused; clicking outside the rename input or switching focus to other UI elements cancels rename mode.
+- **Terminal Rename UTF-16 Surrogate Pair Support**: Terminal renaming now properly decodes UTF-16 surrogate pairs, allowing emoji (e.g., 😀, 🚀) and supplementary Unicode characters in custom tab names.
+- **Ellipsis Clipping for Long Tab Names**: Custom terminal tab names that exceed the tab width now render with an ellipsis rather than clipping mid-character.
+- **Menu Hit-Testing Alignment**: Terminal tab context menus now store their computed rectangle at open time, preventing hit-test target shifting between rendering and click handling.
+- **Stranded Rename Input on Session Reset**: Resetting terminal sessions or switching workspaces now clears any pending rename input and open context menus.
+
 ## [v0.3.1] - 2026-09-29
 
 Released as `lightline.exe` (x64), `lightline-arm64.exe`, `lightline-v0.3.1-windows-x86_64.zip`, `lightline-v0.3.1-windows-arm64.zip` and `SHA256SUMS.txt`. Still unsigned, like v0.3.0: check the file against `SHA256SUMS.txt`, then choose **More info** → **Run anyway** if SmartScreen warns.

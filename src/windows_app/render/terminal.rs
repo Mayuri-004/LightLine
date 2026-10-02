@@ -92,7 +92,13 @@ impl App {
             };
             let active =
                 self.terminal_tab == TerminalTab::Terminal && index == self.terminal_active;
-            Self::label(
+            let clip = RECT {
+                left: rect.left,
+                top: rect.top,
+                right: rect.right - self.scale(4),
+                bottom: rect.bottom,
+            };
+            self.label_ellipsis(
                 hdc,
                 &label,
                 rect.left + self.scale(6),
@@ -102,7 +108,7 @@ impl App {
                 } else {
                     self.theme.muted
                 },
-                *rect,
+                clip,
             );
             if active {
                 Self::fill(
@@ -312,7 +318,7 @@ impl App {
         unsafe {
             SelectObject(hdc, old_font);
         }
-        if let Some(menu) = self.terminal_context_menu_rect(left, right, bottom) {
+        if let Some((_, menu)) = self.terminal_context_menu {
             Self::rounded_fill(hdc, menu, self.scale(4), self.theme.card_edge);
             Self::fill(
                 hdc,

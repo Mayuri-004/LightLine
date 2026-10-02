@@ -695,11 +695,12 @@ impl App {
 
     pub(super) fn terminal_context_menu_rect(
         &self,
+        anchor_x: i32,
+        anchor_y: i32,
         left: i32,
         right: i32,
         bottom: i32,
-    ) -> Option<RECT> {
-        let (_, anchor_x, anchor_y) = self.terminal_context_menu?;
+    ) -> RECT {
         let width = self.scale(164);
         let height = self.scale(30);
         let left = anchor_x
@@ -708,11 +709,27 @@ impl App {
         let top = anchor_y
             .min(bottom - height - self.scale(4))
             .max(self.scale(4));
-        Some(RECT {
+        RECT {
             left,
             top,
             right: left + width,
             bottom: top + height,
+        }
+    }
+
+    pub(super) fn terminal_rename_field_rect(&self, hwnd: HWND) -> Option<RECT> {
+        let (session_id, _) = self.terminal_rename_input.as_ref()?;
+        let index = terminal_pane_index(&self.terminals, *session_id)?;
+        let left = self.editor_left();
+        let right = self.editor_right(hwnd);
+        let top = self.terminal_top(hwnd);
+        let layout = self.terminal_header_layout(left, right, top);
+        let tab = layout.terminals.get(index)?;
+        Some(RECT {
+            left: tab.left,
+            top: layout.header_bottom + self.scale(3),
+            right: (tab.left + self.scale(230)).min(right - self.scale(8)),
+            bottom: layout.header_bottom + self.scale(33),
         })
     }
 
@@ -1341,6 +1358,8 @@ impl App {
         self.terminal_active = 0;
         self.terminal_visible = false;
         self.terminal_focus = false;
+        self.terminal_rename_input = None;
+        self.terminal_context_menu = None;
         self.keep_cursor_visible(hwnd);
     }
 
@@ -1463,5 +1482,80 @@ mod input_tests {
             output_control_bytes(TermKey::Backspace, control),
             Some(vec![8])
         );
+    }
+
+    #[test]
+    fn utf16_surrogate_pairs_and_unicode_decoding() {
+        let mut pending = None;
+
+        // ASCII
+        assert_eq!(decode_utf16_input(&mut pending, b'A' as u16), Some('A'));
+        assert_eq!(pending, None);
+
+        // BMP Unicode
+        assert_eq!(decode_utf16_input(&mut pending, 0x00e9), Some('é'));
+        assert_eq!(pending, None);
+        assert_eq!(decode_utf16_input(&mut pending, 0x4e2d), Some('中'));
+        assert_eq!(pending, None);
+
+        // Supplementary characters: emoji 😀 (U+1F600 = [0xD83D, 0xDE00])
+        assert_eq!(decode_utf16_input(&mut pending, 0xd83d), None);
+        assert_eq!(pending, Some(0xd83d));
+        assert_eq!(decode_utf16_input(&mut pending, 0xde00), Some('😀'));
+        assert_eq!(pending, None);
+
+        // Supplementary characters: rocket 🚀 (U+1F680 = [0xD83D, 0xDE80])
+        assert_eq!(decode_utf16_input(&mut pending, 0xd83d), None);
+        assert_eq!(pending, Some(0xd83d));
+        assert_eq!(decode_utf16_input(&mut pending, 0xde80), Some('🚀'));
+        assert_eq!(pending, None);
+
+        // Unpaired low surrogate rejected
+        assert_eq!(decode_utf16_input(&mut pending, 0xde00), None);
+        assert_eq!(pending, None);
+    }
+
+    #[test]
+    fn menu_rectangle_clamps_to_layout_bounds() {
+        // App scaled dimensions for menu
+        let width = 164;
+        let height = 30;
+        let left_bound = 50;
+        let right_bound = 300;
+        let bottom_bound = 400;
+
+        let clamp = |anchor_x: i32, anchor_y: i32| {
+            let left = anchor_x
+                .min(right_bound - width - 6)
+                .max(left_bound + 6);
+            let top = anchor_y
+                .min(bottom_bound - height - 4)
+                .max(4);
+            RECT {
+                left,
+                top,
+                right: left + width,
+                bottom: top + height,
+            }
+        };
+
+        // Normal anchor
+        let rect = clamp(100, 100);
+        assert_eq!(rect.left, 100);
+        assert_eq!(rect.top, 100);
+
+        // Anchor near/beyond right edge clamps left so menu stays inside right_bound
+        let rect = clamp(500, 100);
+        assert_eq!(rect.right, right_bound - 6);
+        assert!(rect.left >= left_bound + 6);
+
+        // Anchor near/beyond bottom edge clamps top so menu stays inside bottom_bound
+        let rect = clamp(100, 500);
+        assert_eq!(rect.bottom, bottom_bound - 4);
+        assert!(rect.top >= 4);
+
+        // Anchor near/beyond left edge clamps left
+        let rect = clamp(10, 100);
+        assert_eq!(rect.left, left_bound + 6);
     }
 }
