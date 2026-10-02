@@ -438,7 +438,9 @@ impl App {
             TerminalTab::Problems => {
                 self.terminal_tab = TerminalTab::Problems;
                 self.terminal_focus = false;
+                self.problem_focus = true;
                 self.problem_selected = 0;
+                self.problem_first = 0;
                 unsafe {
                     SetFocus(hwnd);
                     InvalidateRect(hwnd, null(), 0);
