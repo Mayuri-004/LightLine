@@ -309,6 +309,7 @@ impl TerminalService {
         }
         #[cfg(windows)]
         {
+            #[allow(deprecated)]
             let number = NEXT_SESSION
                 .try_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
                 .map_err(|_| ControlError::Spawn("Session ID space exhausted".into()))?;
