@@ -2226,6 +2226,33 @@ impl App {
             },
         ))
     }
+    pub(super) fn problems_list_layout(
+        &self,
+        hwnd: HWND,
+        problem_count: usize,
+    ) -> Option<(i32, i32, usize, usize)> {
+        if problem_count == 0 {
+            return None;
+        }
+
+        let terminal_top = self.terminal_top(hwnd);
+
+        let mut rect = RECT::default();
+        unsafe {
+            GetClientRect(hwnd, &mut rect);
+        }
+
+        let terminal_bottom = rect.bottom - self.scale(STATUS);
+        let header_bottom = self
+            .terminal_header_layout(0, rect.right, terminal_top)
+            .header_bottom;
+        let row_height = self.scale(28).max(1);
+        let first_row_y = header_bottom + self.scale(8);
+        let visible_rows = ((terminal_bottom - first_row_y).max(0) / row_height).max(1) as usize;
+        let max_first = problem_count.saturating_sub(visible_rows);
+
+        Some((first_row_y, row_height, visible_rows, max_first))
+    }
     pub(super) fn problems_scrollbar(&self, hwnd: HWND) -> Option<(RECT, RECT)> {
         let problem_count = self.problem_entries().len();
         if problem_count == 0 {
@@ -2301,17 +2328,10 @@ impl App {
             return;
         }
 
-        let row_height = self.scale(28).max(1);
-        let terminal_top = self.terminal_top(hwnd);
-
-        let mut rect = RECT::default();
-        unsafe { GetClientRect(hwnd, &mut rect) };
-
-        let terminal_bottom = rect.bottom - self.scale(STATUS);
-        let header_height = self.scale(36);
-        let first_row_y = terminal_top + header_height + self.scale(8);
-        let visible_rows = ((terminal_bottom - first_row_y).max(0) / row_height).max(1) as usize;
-        let max_first = problem_count.saturating_sub(visible_rows);
+        let Some((_, _, visible_rows, max_first)) = self.problems_list_layout(hwnd, problem_count)
+        else {
+            return;
+        };
 
         if y < slider.top || y >= slider.bottom {
             let length = slider.bottom - slider.top;
@@ -2351,16 +2371,10 @@ impl App {
             return;
         }
 
-        let row_height = self.scale(28).max(1);
-        let terminal_top = self.terminal_top(hwnd);
-
-        let mut rect = RECT::default();
-        unsafe { GetClientRect(hwnd, &mut rect) };
-
-        let terminal_bottom = rect.bottom - self.scale(STATUS);
-        let first_row_y = terminal_top + self.scale(36) + self.scale(8);
-        let visible_rows = ((terminal_bottom - first_row_y).max(0) / row_height).max(1) as usize;
-        let max_first = problem_count.saturating_sub(visible_rows);
+        let Some((_, _, visible_rows, max_first)) = self.problems_list_layout(hwnd, problem_count)
+        else {
+            return;
+        };
 
         let room = (track.bottom - track.top - (slider.bottom - slider.top)).max(1) as i64;
 

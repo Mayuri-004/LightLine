@@ -246,10 +246,11 @@ impl App {
         );
         if self.terminal_tab == TerminalTab::Problems {
             let entries = self.problem_entries();
-            let row_height = self.scale(28);
-            let first_row_y = header_bottom + self.scale(8);
-            let visible_rows = ((bottom - first_row_y).max(0) / row_height) as usize;
-            let max_first = entries.len().saturating_sub(visible_rows.max(1));
+            let Some((first_row_y, row_height, visible_rows, max_first)) =
+                self.problems_list_layout(hwnd, entries.len())
+            else {
+                return;
+            };
             let first_problem = self.problem_first.min(max_first);
 
             for (row_index, (_, _, diagnostic)) in entries

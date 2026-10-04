@@ -455,6 +455,7 @@ unsafe extern "system" fn wnd_proc(
             app.sidebar_dragging = false;
             app.terminal_resizing = false;
             app.terminal_selecting = false;
+            app.problem_scrollbar_grab = None;
             if app.scrollbar_grab.take().is_some() {
                 app.invalidate_scrollbar(hwnd, app.focused_pane);
             }
@@ -503,17 +504,11 @@ unsafe extern "system" fn wnd_proc(
                     let problem_count = app.problem_entries().len();
 
                     if problem_count > 0 {
-                        let terminal_top = app.terminal_top(hwnd);
-                        let terminal_bottom = rect.bottom - app.scale(STATUS);
-
-                        let header_height = app.scale(36);
-                        let first_row_y = terminal_top + header_height + app.scale(8);
-                        let row_height = app.scale(28).max(1);
-
-                        let visible_rows =
-                            ((terminal_bottom - first_row_y).max(0) / row_height).max(1) as usize;
-
-                        let max_first = problem_count.saturating_sub(visible_rows);
+                        let Some((_, _, visible_rows, max_first)) =
+                            app.problems_list_layout(hwnd, problem_count)
+                        else {
+                            return 0;
+                        };
 
                         if delta > 0 {
                             app.problem_first = app.problem_first.saturating_sub(1);

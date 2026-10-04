@@ -82,8 +82,6 @@ impl App {
         {
             return true;
         }
-            return true;
-        }
         if self.more_menu_key(hwnd, key) {
             return true;
         }
@@ -343,20 +341,11 @@ impl App {
                         self.problem_selected =
                             (self.problem_selected + 1).min(problem_entries.len() - 1);
 
-                        let row_height = self.scale(28).max(1);
-                        let terminal_top = self.terminal_top(hwnd);
-
-                        let mut rect = RECT::default();
-                        unsafe { GetClientRect(hwnd, &mut rect) };
-
-                        let terminal_bottom = rect.bottom - self.scale(STATUS);
-                        let header_height = self.scale(36);
-                        let first_row_y = terminal_top + header_height + self.scale(8);
-
-                        let visible_rows =
-                            ((terminal_bottom - first_row_y).max(0) / row_height).max(1) as usize;
-
-                        let max_first = problem_entries.len().saturating_sub(visible_rows);
+                        let Some((_, _, visible_rows, max_first)) =
+                            self.problems_list_layout(hwnd, problem_entries.len())
+                        else {
+                            return true;
+                        };
 
                         if self.problem_selected >= self.problem_first + visible_rows {
                             self.problem_first =
@@ -1947,15 +1936,10 @@ impl App {
                 }
 
                 let problem_entries = self.problem_entries();
-                let row_height = self.scale(28);
-                let first_row_y = header_bottom + self.scale(8);
 
-                if y >= first_row_y {
-                    let terminal_bottom = rect.bottom - self.scale(STATUS);
-                    let visible_rows =
-                        ((terminal_bottom - first_row_y).max(0) / row_height).max(1) as usize;
-
-                    let max_first = problem_entries.len().saturating_sub(visible_rows);
+                if let Some((first_row_y, row_height, visible_rows, max_first)) =
+                    self.problems_list_layout(hwnd, problem_entries.len())
+                {
                     let first_problem = self.problem_first.min(max_first);
 
                     let clicked_row = ((y - first_row_y) / row_height) as usize;
