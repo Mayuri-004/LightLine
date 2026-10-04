@@ -177,10 +177,18 @@ impl vt100::Callbacks for Callbacks {
     // OSC 52 is intentionally left as the trait's no-op: no clipboard access.
 }
 
+#[derive(Clone, Debug)]
+struct SavedCursor {
+    position: (u16, u16),
+    attrs: Vec<u8>,
+}
+
 pub struct TerminalModel {
     parser: vt100::Parser<Callbacks>,
     osc_length: Option<usize>,
     escape_pending: bool,
+    csi_params: Option<Vec<u8>>,
+    saved_cursor: Option<SavedCursor>,
 }
 
 impl TerminalModel {
@@ -195,6 +203,8 @@ impl TerminalModel {
             ),
             osc_length: None,
             escape_pending: false,
+            csi_params: None,
+            saved_cursor: None,
         }
     }
 
@@ -204,6 +214,7 @@ impl TerminalModel {
         // Never decode chunks independently: vte retains incomplete UTF-8 and VT sequences.
         let mut start = 0;
         for (index, &byte) in bytes.iter().enumerate() {
+            let mut clear_scrollback = false;
             let keep = if let Some(length) = self.osc_length {
                 if matches!(byte, 7 | 24 | 26 | 27) {
                     self.osc_length = None;
@@ -213,9 +224,45 @@ impl TerminalModel {
                     self.osc_length = Some((length + 1).min(8_193));
                     length < 8_192
                 }
+            } else if let Some(params) = self.csi_params.as_mut() {
+                if byte == 27 {
+                    self.csi_params = None;
+                    self.escape_pending = true;
+                } else if matches!(byte, 24 | 26) {
+                    self.csi_params = None;
+                } else if (0x40..=0x7e).contains(&byte) {
+                    clear_scrollback = byte == b'J' && params.as_slice() == b"3";
+                    self.csi_params = None;
+                    self.escape_pending = false;
+                } else if (0x20..=0x3f).contains(&byte) && params.len() < 128 {
+                    params.push(byte);
+                } else {
+                    self.csi_params = None;
+                }
+                true
             } else {
-                if self.escape_pending && byte == b']' {
+                if self.escape_pending && byte == b'7' {
+                    if start <= index {
+                        self.parser.process(&bytes[start..=index]);
+                    }
+                    start = index + 1;
+                    let screen = self.parser.screen();
+                    self.saved_cursor = Some(SavedCursor {
+                        position: screen.cursor_position(),
+                        attrs: screen.attributes_formatted(),
+                    });
+                    self.escape_pending = false;
+                    continue;
+                }
+                if self.escape_pending && byte == b'c' {
+                    self.saved_cursor = None;
+                    self.escape_pending = false;
+                } else if self.escape_pending && byte == b']' {
                     self.osc_length = Some(0);
+                    self.escape_pending = false;
+                } else if self.escape_pending && byte == b'[' {
+                    self.csi_params = Some(Vec::new());
+                    self.escape_pending = false;
                 }
                 if byte == 27 {
                     self.escape_pending = true;
@@ -224,6 +271,14 @@ impl TerminalModel {
                 }
                 true
             };
+            if clear_scrollback {
+                if start <= index {
+                    self.parser.process(&bytes[start..=index]);
+                }
+                self.clear_scrollback();
+                start = index + 1;
+                continue;
+            }
             if !keep {
                 if start < index {
                     self.parser.process(&bytes[start..index]);
@@ -233,6 +288,50 @@ impl TerminalModel {
         }
         if start < bytes.len() {
             self.parser.process(&bytes[start..]);
+        }
+    }
+
+    fn clear_scrollback(&mut self) {
+        if self.parser.screen().alternate_screen() {
+            return;
+        }
+        let (rows, columns, input_modes, hide_cursor, current_cursor, current_attrs) = {
+            let screen = self.parser.screen();
+            let (rows, columns) = screen.size();
+            (
+                rows,
+                columns,
+                screen.input_mode_formatted(),
+                screen.hide_cursor(),
+                screen.cursor_position(),
+                screen.attributes_formatted(),
+            )
+        };
+        let callbacks = std::mem::take(self.parser.callbacks_mut());
+        self.parser = vt100::Parser::new_with_callbacks(rows, columns, SCROLLBACK_LINES, callbacks);
+        if !input_modes.is_empty() {
+            self.parser.process(&input_modes);
+        }
+        if hide_cursor {
+            self.parser.process(b"\x1b[?25l");
+        }
+
+        if let Some(saved) = &self.saved_cursor {
+            let r = saved.position.0.min(rows.saturating_sub(1)) + 1;
+            let c = saved.position.1.min(columns.saturating_sub(1)) + 1;
+            self.parser.process(format!("\x1b[{r};{c}H").as_bytes());
+            if !saved.attrs.is_empty() {
+                self.parser.process(&saved.attrs);
+            }
+            self.parser.process(b"\x1b7");
+        }
+
+        let cur_r = current_cursor.0.min(rows.saturating_sub(1)) + 1;
+        let cur_c = current_cursor.1.min(columns.saturating_sub(1)) + 1;
+        self.parser
+            .process(format!("\x1b[{cur_r};{cur_c}H").as_bytes());
+        if !current_attrs.is_empty() {
+            self.parser.process(&current_attrs);
         }
     }
 
@@ -430,5 +529,80 @@ mod tests {
         );
         model.process(b"\x1b[2J\x1b[H");
         assert_eq!(snapshot(&mut model, 0).text().trim(), "");
+    }
+
+    #[test]
+    fn csi_2j_preserves_scrollback_and_3j_clears_it() {
+        let mut model = TerminalModel::new(TerminalSize::new(3, 12).unwrap());
+        model.process(b"before-1\r\nbefore-2\r\nbefore-3\r\n");
+        assert!(snapshot(&mut model, 0).scrollback_available > 0);
+
+        // CSI 2J clears visible screen but preserves scrollback history
+        model.process(b"\x1b[2J\x1b[H");
+        assert!(snapshot(&mut model, 0).scrollback_available > 0);
+        assert_eq!(snapshot(&mut model, 0).text().trim(), "");
+
+        // Repeated 2J clears do not discard scrollback
+        for _ in 0..5 {
+            model.process(b"\x1b[2J");
+            assert!(snapshot(&mut model, 0).scrollback_available > 0);
+        }
+
+        // CSI 3J clears scrollback history
+        model.process(b"\x1b[3J");
+        let cleared = snapshot(&mut model, 0);
+        assert_eq!(cleared.scrollback_available, 0);
+        assert_eq!(cleared.scrollback_offset, 0);
+    }
+
+    #[test]
+    fn csi_3j_discards_scrollback_across_chunk_splits() {
+        let clear_sequence = b"\x1b[3J";
+        for split in 0..=clear_sequence.len() {
+            let mut split_model = TerminalModel::new(TerminalSize::new(3, 12).unwrap());
+            split_model.process(b"before-1\r\nbefore-2\r\nbefore-3\r\n");
+            split_model.process(b"\x1b[?1h\x1b[?2004h");
+            split_model.process(&clear_sequence[..split]);
+            split_model.process(&clear_sequence[split..]);
+            let cleared = snapshot(&mut split_model, usize::MAX);
+            assert_eq!(cleared.scrollback_available, 0);
+            assert_eq!(cleared.scrollback_offset, 0);
+            assert!(cleared.modes.application_cursor);
+            assert!(cleared.modes.bracketed_paste);
+            split_model.process(b"after");
+            assert!(snapshot(&mut split_model, 0).text().contains("after"));
+        }
+    }
+
+    #[test]
+    fn csi_3j_preserves_saved_cursor_and_terminal_modes() {
+        let mut model = TerminalModel::new(TerminalSize::new(5, 20).unwrap());
+        model.process(b"line 1\r\nline 2\r\nline 3\r\nline 4\r\n");
+        // Move to row 2, col 5 (1-based: 2;5) and save cursor with DECSC (\x1b7)
+        model.process(b"\x1b[2;5H\x1b7");
+        // Set application cursor and bracketed paste modes
+        model.process(b"\x1b[?1h\x1b[?2004h");
+        // Move cursor to row 4, col 10
+        model.process(b"\x1b[4;10H");
+        assert_eq!(model.parser.screen().cursor_position(), (3, 9));
+
+        // Clear scrollback with CSI 3J
+        model.process(b"\x1b[3J");
+        assert_eq!(snapshot(&mut model, 0).scrollback_available, 0);
+
+        // Verify modes survived
+        let snap = snapshot(&mut model, 0);
+        assert!(snap.modes.application_cursor);
+        assert!(snap.modes.bracketed_paste);
+
+        // Restore saved cursor with DECRC (\x1b8)
+        model.process(b"\x1b8");
+        assert_eq!(model.parser.screen().cursor_position(), (1, 4));
+
+        // Process new output and verify it renders at the restored cursor position
+        model.process(b"X");
+        let text = snapshot(&mut model, 0).text();
+        let second_row = text.lines().nth(1).unwrap_or("");
+        assert!(second_row.starts_with("    X"));
     }
 }

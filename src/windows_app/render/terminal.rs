@@ -114,14 +114,22 @@ impl App {
                 .map(|p| p.shell_kind.tag().to_uppercase())
                 .unwrap_or_else(|| "TERMINAL".into());
             let title = pane.map(|p| p.title.as_str()).unwrap_or("?");
-            let label = if self.terminals.len() == 1 {
+            let label = if pane.is_some_and(|pane| pane.custom_title) {
+                title.to_string()
+            } else if self.terminals.len() == 1 {
                 shell_tag
             } else {
                 format!("{shell_tag} {title}")
             };
             let active =
                 self.terminal_tab == TerminalTab::Terminal && index == self.terminal_active;
-            Self::label(
+            let clip = RECT {
+                left: rect.left,
+                top: rect.top,
+                right: rect.right - self.scale(4),
+                bottom: rect.bottom,
+            };
+            self.label_ellipsis(
                 hdc,
                 &label,
                 rect.left + self.scale(6),
@@ -131,7 +139,7 @@ impl App {
                 } else {
                     self.theme.muted
                 },
-                *rect,
+                clip,
             );
             if active {
                 Self::fill(
@@ -461,6 +469,56 @@ impl App {
         }
         unsafe {
             SelectObject(hdc, old_font);
+        }
+        if let Some((_, menu)) = self.terminal_context_menu {
+            Self::rounded_fill(hdc, menu, self.scale(4), self.theme.card_edge);
+            Self::fill(
+                hdc,
+                RECT {
+                    left: menu.left + self.scale(1),
+                    top: menu.top + self.scale(1),
+                    right: menu.right - self.scale(1),
+                    bottom: menu.bottom - self.scale(1),
+                },
+                self.theme.sidebar_bg,
+            );
+            Self::label(
+                hdc,
+                "Rename Terminal",
+                menu.left + self.scale(10),
+                menu.top + self.scale(7),
+                self.theme.text,
+                menu,
+            );
+        }
+        if let Some((session_id, name)) = &self.terminal_rename_input
+            && let Some(index) = self
+                .terminals
+                .iter()
+                .position(|pane| pane.id == *session_id)
+            && let Some(tab) = layout.terminals.get(index)
+        {
+            let field = RECT {
+                left: tab.left,
+                top: header_bottom + self.scale(3),
+                right: (tab.left + self.scale(230)).min(right - self.scale(8)),
+                bottom: header_bottom + self.scale(33),
+            };
+            self.panel_card(
+                hdc,
+                field,
+                self.scale(4),
+                self.theme.card_edge,
+                self.theme.sidebar_bg,
+            );
+            Self::label(
+                hdc,
+                name,
+                field.left + self.scale(8),
+                field.top + self.scale(7),
+                self.theme.text,
+                field,
+            );
         }
         if self.terminal_profile_menu_open {
             self.paint_terminal_profile_menu(hdc, left, right, top, bottom);

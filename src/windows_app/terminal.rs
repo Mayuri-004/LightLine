@@ -172,6 +172,47 @@ pub(super) enum TerminalHeaderHit {
     Body,
 }
 
+const MAX_TERMINAL_NAME_CHARS: usize = 48;
+
+fn normalized_terminal_name(name: &str) -> Option<String> {
+    let name: String = name
+        .trim()
+        .chars()
+        .filter(|ch| !ch.is_control())
+        .take(MAX_TERMINAL_NAME_CHARS)
+        .collect();
+    (!name.trim().is_empty()).then_some(name)
+}
+
+fn set_terminal_pane_name(
+    terminals: &mut [TerminalPane],
+    session_id: SessionId,
+    name: String,
+) -> bool {
+    let Some(pane) = terminals.iter_mut().find(|pane| pane.id == session_id) else {
+        return false;
+    };
+    pane.title = name;
+    pane.custom_title = true;
+    true
+}
+
+fn terminal_pane_index(terminals: &[TerminalPane], session_id: SessionId) -> Option<usize> {
+    terminals.iter().position(|pane| pane.id == session_id)
+}
+
+fn clear_terminal_rename_for_session(
+    rename_input: &mut Option<(SessionId, String)>,
+    session_id: SessionId,
+) {
+    if rename_input
+        .as_ref()
+        .is_some_and(|(target, _)| *target == session_id)
+    {
+        *rename_input = None;
+    }
+}
+
 pub(super) struct TerminalHeaderLayout {
     pub(super) header_bottom: i32,
     pub(super) problems: RECT,
@@ -241,6 +282,7 @@ impl App {
                 let title = self.terminal_counter.to_string();
                 self.terminals.push(TerminalPane {
                     title,
+                    custom_title: false,
                     service,
                     id,
                     snapshot: None,
@@ -341,7 +383,8 @@ impl App {
             return;
         }
         let index = self.terminal_active.min(self.terminals.len() - 1);
-        self.terminals.remove(index);
+        let removed = self.terminals.remove(index);
+        clear_terminal_rename_for_session(&mut self.terminal_rename_input, removed.id);
         if self.terminals.is_empty() {
             self.terminal_visible = false;
             self.terminal_focus = false;
@@ -371,7 +414,8 @@ impl App {
             .spawn_terminal_pane(hwnd, shell_kind, no_profile)
             .is_some()
         {
-            self.terminals.remove(old);
+            let removed = self.terminals.remove(old);
+            clear_terminal_rename_for_session(&mut self.terminal_rename_input, removed.id);
             self.terminal_active = self.terminals.len() - 1;
             self.focus_active_shell(hwnd);
             self.status = format!("Restarted {} terminal\u{2026}", shell_kind.name());
@@ -660,6 +704,87 @@ impl App {
             return TerminalHeaderHit::Kill;
         }
         TerminalHeaderHit::Body
+    }
+
+    pub(super) fn terminal_context_menu_rect(
+        &self,
+        anchor_x: i32,
+        anchor_y: i32,
+        left: i32,
+        right: i32,
+        bottom: i32,
+    ) -> RECT {
+        let width = self.scale(164);
+        let height = self.scale(30);
+        let left = anchor_x
+            .min(right - width - self.scale(6))
+            .max(left + self.scale(6));
+        let top = anchor_y
+            .min(bottom - height - self.scale(4))
+            .max(self.scale(4));
+        RECT {
+            left,
+            top,
+            right: left + width,
+            bottom: top + height,
+        }
+    }
+
+    pub(super) fn terminal_rename_field_rect(&self, hwnd: HWND) -> Option<RECT> {
+        let (session_id, _) = self.terminal_rename_input.as_ref()?;
+        let index = terminal_pane_index(&self.terminals, *session_id)?;
+        let left = self.editor_left();
+        let right = self.editor_right(hwnd);
+        let top = self.terminal_top(hwnd);
+        let layout = self.terminal_header_layout(left, right, top);
+        let tab = layout.terminals.get(index)?;
+        Some(RECT {
+            left: tab.left,
+            top: layout.header_bottom + self.scale(3),
+            right: (tab.left + self.scale(230)).min(right - self.scale(8)),
+            bottom: layout.header_bottom + self.scale(33),
+        })
+    }
+
+    pub(super) fn rename_terminal(&mut self, hwnd: HWND, session_id: SessionId) {
+        let Some(index) = terminal_pane_index(&self.terminals, session_id) else {
+            self.terminal_context_menu = None;
+            unsafe { InvalidateRect(hwnd, null(), 0) };
+            return;
+        };
+        let Some(pane) = self.terminals.get(index) else {
+            return;
+        };
+        let rename_state = (pane.id, pane.title.clone());
+        self.terminal_context_menu = None;
+        self.terminal_tab = TerminalTab::Terminal;
+        self.terminal_active = index;
+        self.terminal_focus = true;
+        self.terminal_rename_input = Some(rename_state);
+        self.caret_on = true;
+        unsafe {
+            SetFocus(hwnd);
+            InvalidateRect(hwnd, null(), 0);
+        }
+    }
+
+    pub(super) fn finish_terminal_rename(&mut self, hwnd: HWND) {
+        let Some((session_id, input)) = self.terminal_rename_input.clone() else {
+            return;
+        };
+        let Some(title) = normalized_terminal_name(&input) else {
+            self.status = "Terminal name cannot be empty".into();
+            unsafe { InvalidateRect(hwnd, null(), 0) };
+            return;
+        };
+        if !set_terminal_pane_name(&mut self.terminals, session_id, title) {
+            self.terminal_rename_input = None;
+            unsafe { InvalidateRect(hwnd, null(), 0) };
+            return;
+        }
+        self.terminal_rename_input = None;
+        self.status = "Terminal renamed".into();
+        unsafe { InvalidateRect(hwnd, null(), 0) };
     }
 
     pub(super) fn terminal_profile_menu_layout(
@@ -1251,6 +1376,8 @@ impl App {
         self.terminal_active = 0;
         self.terminal_visible = false;
         self.terminal_focus = false;
+        self.terminal_rename_input = None;
+        self.terminal_context_menu = None;
         self.keep_cursor_visible(hwnd);
     }
 
@@ -1290,6 +1417,69 @@ impl App {
 #[cfg(test)]
 mod input_tests {
     use super::*;
+    use crate::windows_app::input::decode_utf16_input;
+
+    fn pane(id: u64, title: &str) -> TerminalPane {
+        TerminalPane {
+            title: title.into(),
+            custom_title: false,
+            service: TerminalService::new(|| {}),
+            id: SessionId(id),
+            snapshot: None,
+            applied_size: None,
+            shell_kind: ShellKind::PowerShell,
+        }
+    }
+
+    #[test]
+    fn terminal_names_are_trimmed_bounded_and_non_empty() {
+        assert_eq!(
+            normalized_terminal_name("  build shell  "),
+            Some("build shell".into())
+        );
+        assert_eq!(normalized_terminal_name(" \t\n "), None);
+        assert_eq!(normalized_terminal_name("one\ntwo"), Some("onetwo".into()));
+        assert_eq!(
+            normalized_terminal_name(&"x".repeat(MAX_TERMINAL_NAME_CHARS + 1)),
+            Some("x".repeat(MAX_TERMINAL_NAME_CHARS))
+        );
+    }
+
+    #[test]
+    fn rename_tracks_session_when_terminal_collection_changes() {
+        let target = SessionId(1);
+        let mut terminals = vec![pane(1, "A"), pane(2, "B"), pane(3, "C")];
+        terminals.remove(2);
+        assert!(set_terminal_pane_name(
+            &mut terminals,
+            target,
+            "renamed A".into()
+        ));
+        assert_eq!(terminals[0].title, "renamed A");
+        assert_eq!(terminals[1].title, "B");
+
+        let target = SessionId(2);
+        terminals = vec![pane(1, "A"), pane(2, "B"), pane(3, "C")];
+        terminals.remove(0);
+        assert!(set_terminal_pane_name(
+            &mut terminals,
+            target,
+            "renamed B".into()
+        ));
+        assert_eq!(terminals[0].title, "renamed B");
+        assert_eq!(terminals[1].title, "C");
+
+        let mut rename_input = Some((target, "pending B".into()));
+        terminals.remove(0);
+        clear_terminal_rename_for_session(&mut rename_input, target);
+        assert_eq!(rename_input, None);
+        assert!(!set_terminal_pane_name(
+            &mut terminals,
+            target,
+            "wrong target".into()
+        ));
+        assert_eq!(terminals[0].title, "C");
+    }
 
     #[test]
     fn output_enter_and_backspace_use_pipe_appropriate_bytes() {
@@ -1311,5 +1501,76 @@ mod input_tests {
             output_control_bytes(TermKey::Backspace, control),
             Some(vec![8])
         );
+    }
+
+    #[test]
+    fn utf16_surrogate_pairs_and_unicode_decoding() {
+        let mut pending = None;
+
+        // ASCII
+        assert_eq!(decode_utf16_input(&mut pending, b'A' as u16), Some('A'));
+        assert_eq!(pending, None);
+
+        // BMP Unicode
+        assert_eq!(decode_utf16_input(&mut pending, 0x00e9), Some('é'));
+        assert_eq!(pending, None);
+        assert_eq!(decode_utf16_input(&mut pending, 0x4e2d), Some('中'));
+        assert_eq!(pending, None);
+
+        // Supplementary characters: emoji 😀 (U+1F600 = [0xD83D, 0xDE00])
+        assert_eq!(decode_utf16_input(&mut pending, 0xd83d), None);
+        assert_eq!(pending, Some(0xd83d));
+        assert_eq!(decode_utf16_input(&mut pending, 0xde00), Some('😀'));
+        assert_eq!(pending, None);
+
+        // Supplementary characters: rocket 🚀 (U+1F680 = [0xD83D, 0xDE80])
+        assert_eq!(decode_utf16_input(&mut pending, 0xd83d), None);
+        assert_eq!(pending, Some(0xd83d));
+        assert_eq!(decode_utf16_input(&mut pending, 0xde80), Some('🚀'));
+        assert_eq!(pending, None);
+
+        // Unpaired low surrogate rejected
+        assert_eq!(decode_utf16_input(&mut pending, 0xde00), None);
+        assert_eq!(pending, None);
+    }
+
+    #[test]
+    fn menu_rectangle_clamps_to_layout_bounds() {
+        // App scaled dimensions for menu
+        let width = 164;
+        let height = 30;
+        let left_bound = 50;
+        let right_bound = 300;
+        let bottom_bound = 400;
+
+        let clamp = |anchor_x: i32, anchor_y: i32| {
+            let left = anchor_x.min(right_bound - width - 6).max(left_bound + 6);
+            let top = anchor_y.min(bottom_bound - height - 4).max(4);
+            RECT {
+                left,
+                top,
+                right: left + width,
+                bottom: top + height,
+            }
+        };
+
+        // Normal anchor
+        let rect = clamp(100, 100);
+        assert_eq!(rect.left, 100);
+        assert_eq!(rect.top, 100);
+
+        // Anchor near/beyond right edge clamps left so menu stays inside right_bound
+        let rect = clamp(500, 100);
+        assert_eq!(rect.right, right_bound - 6);
+        assert!(rect.left >= left_bound + 6);
+
+        // Anchor near/beyond bottom edge clamps top so menu stays inside bottom_bound
+        let rect = clamp(100, 500);
+        assert_eq!(rect.bottom, bottom_bound - 4);
+        assert!(rect.top >= 4);
+
+        // Anchor near/beyond left edge clamps left
+        let rect = clamp(10, 100);
+        assert_eq!(rect.left, left_bound + 6);
     }
 }

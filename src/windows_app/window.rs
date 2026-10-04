@@ -276,10 +276,7 @@ unsafe extern "system" fn wnd_proc(
                         IDC_SIZENS
                     } else if app.divider_dragging
                         || app.sidebar_dragging
-                        || app.split_visible
-                            && !app.welcome
-                            && point.y >= app.scale(TAB_HEIGHT)
-                            && (point.x - app.pane_divider(hwnd)).abs() <= app.scale(6)
+                        || app.split_divider_at(hwnd, point.x, point.y)
                         || (app.sidebar_width > 0
                             && app.sidebar_started.is_none()
                             && (point.x - app.editor_left()).abs() <= app.scale(4))
@@ -442,6 +439,27 @@ unsafe extern "system" fn wnd_proc(
             app.terminal_selecting = false;
             unsafe {
                 ReleaseCapture();
+            }
+            0
+        }
+        WM_CAPTURECHANGED | WM_CANCELMODE => {
+            // WM_LBUTTONUP has already cleared these before its ReleaseCapture
+            // sends WM_CAPTURECHANGED, so only repaint when a drag was cut short.
+            let was_dragging = app.dragging
+                || app.divider_dragging
+                || app.sidebar_dragging
+                || app.terminal_resizing
+                || app.terminal_selecting;
+            app.dragging = false;
+            app.divider_dragging = false;
+            app.sidebar_dragging = false;
+            app.terminal_resizing = false;
+            app.terminal_selecting = false;
+            if app.scrollbar_grab.take().is_some() {
+                app.invalidate_scrollbar(hwnd, app.focused_pane);
+            }
+            if was_dragging {
+                unsafe { InvalidateRect(hwnd, null(), 0) };
             }
             0
         }
